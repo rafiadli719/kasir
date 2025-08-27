@@ -1,0 +1,70 @@
+/* Sidebar Styles */
+.sidebar {
+    width: auto;
+    background: #1e293b;
+    height: 100vh;
+    position: fixed;
+    padding: 20px 0;
+    transition: width 0.3s ease;
+    overflow-y: auto;
+    z-index: 1000;
+}
+
+.sidebar h2 {
+    color: white;
+    text-align: center;
+    padding: 0 20px 20px 20px;
+    border-bottom: 1px solid #334155;
+    margin-bottom: 20px;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.sidebar a {
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    color: #94a3b8;
+    text-decoration: none;
+    font-size: 14px;
+    white-space: nowrap;
+    transition: all 0.3s ease;
+}
+
+.sidebar a:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.sidebar a.active {
+    background: #007bff;
+    color: white;
+}
+
+.sidebar a i {
+    margin-right: 10px;
+    width: 18px;
+    text-align: center;
+}
+
+/* Main content adjustment for sidebar */
+.main-content {
+    margin-left: 200px;
+    padding: 30px;
+    flex: 1;
+    transition: margin-left 0.3s ease;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+    }
+    
+    .main-content {
+        margin-left: 0;
+        padding: 20px;
+    }
+}

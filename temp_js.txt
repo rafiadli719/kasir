@@ -1,0 +1,1372 @@
+<script>
+// PERBAIKAN: Lanjutan JavaScript dengan dukungan kalkulasi gabungan closing yang lebih baik
+
+// Sidebar toggle functionality
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const mainContent = document.getElementById('mainContent');
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    
+    sidebar.classList.toggle('hidden');
+    mainContent.classList.toggle('fullscreen');
+    
+    if (sidebar.classList.contains('hidden')) {
+        sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
+    } else {
+        sidebarToggle.innerHTML = '<i class="fas fa-times"></i>';
+    }
+}
+
+// PERBAIKAN: Enhanced table scrolling functionality
+function initializeTableScrolling() {
+    const tableContainers = document.querySelectorAll('.table-container');
+    
+    tableContainers.forEach((container, index) => {
+        // Add scroll wrapper if not exists
+        const existingWrapper = container.querySelector('.table-wrapper');
+        if (!existingWrapper) {
+            const table = container.querySelector('.table');
+            if (table) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'table-wrapper';
+                table.parentNode.insertBefore(wrapper, table);
+                wrapper.appendChild(table);
+            }
+        }
+        
+        const wrapper = container.querySelector('.table-wrapper');
+        if (wrapper) {
+            // Add scroll event listener untuk visual feedback
+            wrapper.addEventListener('scroll', function() {
+                const isScrolledLeft = this.scrollLeft > 10;
+                const isScrolledRight = this.scrollLeft < (this.scrollWidth - this.clientWidth - 10);
+                
+                // Add/remove classes for styling
+                container.classList.toggle('scrolled-left', isScrolledLeft);
+                container.classList.toggle('scrolled-right', isScrolledRight);
+                
+                // Update scroll indicators
+                updateScrollIndicators(container, this);
+            });
+            
+            // Add keyboard navigation
+            wrapper.addEventListener('keydown', function(e) {
+                const scrollAmount = 100;
+                
+                switch(e.key) {
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        this.scrollLeft -= scrollAmount;
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        this.scrollLeft += scrollAmount;
+                        break;
+                    case 'Home':
+                        e.preventDefault();
+                        this.scrollLeft = 0;
+                        break;
+                    case 'End':
+                        e.preventDefault();
+                        this.scrollLeft = this.scrollWidth;
+                        break;
+                }
+            });
+            
+            // Make wrapper focusable for keyboard navigation
+            wrapper.setAttribute('tabindex', '0');
+            wrapper.setAttribute('role', 'region');
+            wrapper.setAttribute('aria-label', 'Scrollable table');
+            
+            // Initial check
+            wrapper.dispatchEvent(new Event('scroll'));
+            
+            // Show scroll hint for first table
+            if (index === 0 && wrapper.scrollWidth > wrapper.clientWidth) {
+                showScrollHint(container);
+            }
+        }
+    });
+}
+
+// Function to update scroll indicators
+function updateScrollIndicators(container, wrapper) {
+    const isAtStart = wrapper.scrollLeft <= 10;
+    const isAtEnd = wrapper.scrollLeft >= (wrapper.scrollWidth - wrapper.clientWidth - 10);
+    
+    // Update container classes
+    container.classList.toggle('at-start', isAtStart);
+    container.classList.toggle('at-end', isAtEnd);
+    
+    // Update scroll progress indicator if exists
+    const progressIndicator = container.querySelector('.scroll-progress');
+    if (progressIndicator) {
+        const progress = (wrapper.scrollLeft / (wrapper.scrollWidth - wrapper.clientWidth)) * 100;
+        progressIndicator.style.width = Math.min(100, Math.max(0, progress)) + '%';
+    }
+}
+
+// Function to show scroll hint
+function showScrollHint(container) {
+    const hint = document.createElement('div');
+    hint.className = 'scroll-hint';
+    hint.innerHTML = '<i class="fas fa-arrows-alt-h"></i> Scroll untuk melihat kolom lainnya';
+    
+    container.style.position = 'relative';
+    container.appendChild(hint);
+    
+    // Remove hint after animation
+    setTimeout(() => {
+        if (hint.parentNode) {
+            hint.remove();
+        }
+    }, 3500);
+}
+
+// Function to add scroll progress indicator
+function addScrollProgressIndicator() {
+    const tableContainers = document.querySelectorAll('.table-container');
+    
+    tableContainers.forEach(container => {
+        const wrapper = container.querySelector('.table-wrapper');
+        if (wrapper && wrapper.scrollWidth > wrapper.clientWidth) {
+            // Create progress container
+            const progressContainer = document.createElement('div');
+            progressContainer.className = 'scroll-progress-container';
+            
+            // Create progress bar
+            const progressBar = document.createElement('div');
+            progressBar.className = 'scroll-progress';
+            
+            progressContainer.appendChild(progressBar);
+            container.appendChild(progressContainer);
+        }
+    });
+}
+
+// Enhanced smooth scrolling functions
+function scrollTableTo(container, direction) {
+    const wrapper = container.querySelector('.table-wrapper');
+    if (!wrapper) return;
+    
+    const scrollAmount = wrapper.clientWidth * 0.8; // Scroll 80% of visible width
+    const targetScroll = direction === 'left' 
+        ? wrapper.scrollLeft - scrollAmount 
+        : wrapper.scrollLeft + scrollAmount;
+    
+    // Smooth scroll
+    wrapper.scrollTo({
+        left: targetScroll,
+        behavior: 'smooth'
+    });
+}
+
+// Add scroll buttons for better UX
+function addScrollButtons() {
+    const tableContainers = document.querySelectorAll('.table-container');
+    
+    tableContainers.forEach(container => {
+        const wrapper = container.querySelector('.table-wrapper');
+        if (wrapper && wrapper.scrollWidth > wrapper.clientWidth) {
+            // Left scroll button
+            const leftButton = document.createElement('button');
+            leftButton.innerHTML = '<i class="fas fa-chevron-left"></i>';
+            leftButton.className = 'table-scroll-btn table-scroll-left';
+            
+            // Right scroll button
+            const rightButton = document.createElement('button');
+            rightButton.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            rightButton.className = 'table-scroll-btn table-scroll-right';
+            rightButton.style.opacity = '1';
+            
+            // Add event listeners
+            leftButton.addEventListener('click', () => scrollTableTo(container, 'left'));
+            rightButton.addEventListener('click', () => scrollTableTo(container, 'right'));
+            
+            // Add hover effects
+            [leftButton, rightButton].forEach(btn => {
+                btn.addEventListener('mouseenter', function() {
+                    this.style.background = 'rgba(0,123,255,1)';
+                    this.style.transform = 'translateY(-50%) scale(1.1)';
+                });
+                
+                btn.addEventListener('mouseleave', function() {
+                    this.style.background = 'rgba(0,123,255,0.9)';
+                    this.style.transform = 'translateY(-50%) scale(1)';
+                });
+            });
+            
+            container.appendChild(leftButton);
+            container.appendChild(rightButton);
+            
+            // Update button visibility on scroll
+            wrapper.addEventListener('scroll', function() {
+                const isAtStart = this.scrollLeft <= 10;
+                const isAtEnd = this.scrollLeft >= (this.scrollWidth - this.clientWidth - 10);
+                
+                leftButton.style.opacity = isAtStart ? '0' : '1';
+                rightButton.style.opacity = isAtEnd ? '0' : '1';
+            });
+        }
+    });
+}
+
+// Touch/swipe support for mobile
+function addTouchSupport() {
+    const tableWrappers = document.querySelectorAll('.table-wrapper');
+    
+    tableWrappers.forEach(wrapper => {
+        let startX = 0;
+        let scrollStart = 0;
+        let isDragging = false;
+        
+        wrapper.addEventListener('touchstart', function(e) {
+            startX = e.touches[0].clientX;
+            scrollStart = this.scrollLeft;
+            isDragging = true;
+            this.style.scrollBehavior = 'auto';
+        }, { passive: true });
+        
+        wrapper.addEventListener('touchmove', function(e) {
+            if (!isDragging) return;
+            
+            const currentX = e.touches[0].clientX;
+            const diffX = startX - currentX;
+            
+            // Only prevent default if we're actually scrolling horizontally
+            if (Math.abs(diffX) > 2) {
+                e.preventDefault();
+                this.scrollLeft = scrollStart + diffX;
+            }
+        }, { passive: false });
+        
+        wrapper.addEventListener('touchend', function() {
+            isDragging = false;
+            this.style.scrollBehavior = 'smooth';
+        }, { passive: true });
+        
+        wrapper.addEventListener('touchcancel', function() {
+            isDragging = false;
+            this.style.scrollBehavior = 'smooth';
+        }, { passive: true });
+    });
+}
+
+// Re-initialize when content changes (for dynamic content)
+function reinitializeTableScrolling() {
+    // Remove existing elements
+    document.querySelectorAll('.scroll-progress-container, .table-scroll-btn, .scroll-hint').forEach(el => el.remove());
+    
+    // Re-initialize
+    setTimeout(() => {
+        initializeTableScrolling();
+        addScrollProgressIndicator();
+        addTouchSupport();
+    }, 100);
+}
+
+// Auto-hide sidebar on bank_history tab
+document.addEventListener('DOMContentLoaded', function() {
+    const currentTab = '<?php echo $tab; ?>';
+    const sidebar = document.getElementById('sidebar');
+    const mainContent = document.getElementById('mainContent');
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    
+    if (currentTab === 'bank_history') {
+        sidebar.classList.add('hidden');
+        mainContent.classList.add('fullscreen');
+        sidebarToggle.classList.add('show');
+        sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
+    } else {
+        sidebar.classList.remove('hidden');
+        mainContent.classList.remove('fullscreen');
+        sidebarToggle.classList.remove('show');
+    }
+    
+    // Initialize closing transaction highlighting
+    initializeClosingTransactionHighlighting();
+    
+    // Initialize enhanced tooltips for closing transactions
+    initializeClosingTooltips();
+    
+    // PERBAIKAN: Initialize table scroll untuk tabel yang lebar
+    initializeTableScrolling();
+    addScrollProgressIndicator();
+    addTouchSupport();
+});
+
+// Initialize closing transaction highlighting
+function initializeClosingTransactionHighlighting() {
+    const closingRows = document.querySelectorAll('.closing-transaction');
+    closingRows.forEach(row => {
+        // Add hover effect
+        row.addEventListener('mouseenter', function() {
+            this.style.backgroundColor = 'rgba(156,39,176,0.15)';
+        });
+        
+        row.addEventListener('mouseleave', function() {
+            this.style.backgroundColor = 'rgba(156,39,176,0.05)';
+        });
+        
+        // Add pulse animation for new closing transactions
+        if (row.querySelector('.closing-info-badge')) {
+            row.style.animation = 'pulse 2s infinite';
+        }
+    });
+}
+
+// PERBAIKAN: Initialize enhanced tooltips for closing transactions dengan info gabungan
+function initializeClosingTooltips() {
+    const closingBadges = document.querySelectorAll('.closing-info-badge');
+    closingBadges.forEach(badge => {
+        badge.title = 'Transaksi Closing: Gabungan dari transaksi closing, transaksi yang dipinjam, dan transaksi yang meminjam per cabang';
+        badge.style.cursor = 'help';
+    });
+    
+    const closingTransactions = document.querySelectorAll('.closing-transaction');
+    closingTransactions.forEach(row => {
+        row.title = 'Baris ini mengandung transaksi closing gabungan';
+        row.style.cursor = 'pointer';
+    });
+    
+    // PERBAIKAN: Add tooltips untuk closing borrowed info
+    const closingBorrowedInfos = document.querySelectorAll('.closing-borrowed-info');
+    closingBorrowedInfos.forEach(info => {
+        info.title = 'Informasi gabungan: menampilkan jumlah yang dipinjam dan yang seharusnya diterima secara fisik';
+        info.style.cursor = 'help';
+    });
+}
+
+// Initialize currency formatting for validation inputs
+document.getElementById('jumlahDiterima')?.addEventListener('input', function(e) {
+    formatCurrencyInputValue(e);
+    const isClosing = checkIfClosingTransaction();
+    hitungSelisihTransaksi(isClosing);
+});
+
+document.getElementById('jumlahDiterimaBaru')?.addEventListener('input', function(e) {
+    formatCurrencyInputValue(e);
+    const isClosing = checkIfClosingTransaction();
+    hitungSelisihEdit(isClosing);
+});
+
+// Helper function to format currency input value
+function formatCurrencyInputValue(e) {
+    let value = e.target.value.replace(/[^0-9]/g, '');
+    if (value) {
+        value = parseInt(value).toLocaleString('id-ID');
+        e.target.value = 'Rp ' + value;
+    } else {
+        e.target.value = '';
+    }
+}
+
+// PERBAIKAN: Enhanced function to check if current transaction is closing dengan context gabungan
+function checkIfClosingTransaction() {
+    // Check from PHP data or modal indicators
+    const closingBadge = document.querySelector('.closing-info-badge');
+    const closingInfo = document.querySelector('.closing-validation-info');
+    
+    // Check juga dari data transaksi yang ada
+    const closingBorrowedInfo = document.querySelector('.closing-borrowed-info');
+    
+    return closingBadge !== null || closingInfo !== null || closingBorrowedInfo !== null;
+}
+
+// PERBAIKAN: Function untuk mendapatkan data closing borrowed dari PHP
+function getClosingBorrowedAmount() {
+    // Ambil dari PHP data yang sudah di-pass ke JavaScript
+    const transaksiDetail = <?php echo json_encode($transaksi_detail ?? null); ?>;
+    const editSelisihDetail = <?php echo json_encode($edit_selisih_detail ?? null); ?>;
+    
+    let borrowedAmount = 0;
+    
+    if (transaksiDetail && transaksiDetail.total_closing_borrowed) {
+        borrowedAmount = parseFloat(transaksiDetail.total_closing_borrowed) || 0;
+    } else if (editSelisihDetail && editSelisihDetail.total_closing_borrowed) {
+        borrowedAmount = parseFloat(editSelisihDetail.total_closing_borrowed) || 0;
+    }
+    
+    return borrowedAmount;
+}
+
+// PERBAIKAN: Enhanced calculation function untuk transaksi validation dengan closing support dan kalkulasi gabungan
+function hitungSelisihTransaksi(isClosing = false) {
+    const sistemAmount = <?php echo isset($transaksi_detail['setoran_real']) ? $transaksi_detail['setoran_real'] : 0; ?>;
+    const borrowedAmount = getClosingBorrowedAmount();
+    
+    let diterima = document.getElementById('jumlahDiterima')?.value.replace(/[^0-9]/g, '') || 0;
+    diterima = parseInt(diterima) || 0;
+
+    // PERBAIKAN: Kalkulasi selisih dengan mempertimbangkan gabungan closing
+    let expectedAmount = sistemAmount;
+    if (isClosing && borrowedAmount > 0) {
+        // Untuk transaksi closing dengan pinjaman, yang diharapkan diterima = setoran_real - yang dipinjam
+        expectedAmount = sistemAmount - borrowedAmount;
+    }
+
+    const selisih = diterima - expectedAmount;
+    const selisihRow = document.getElementById('selisihRow');
+    const selisihAmount = document.getElementById('selisihAmount');
+
+    if (selisihRow && selisihAmount) {
+        if (selisih !== 0) {
+            selisihRow.style.display = 'block';
+            
+            let selisihText = '';
+            let selisihColor = '';
+            
+            if (selisih > 0) {
+                selisihText = '<i class="fas fa-arrow-up"></i> Rp ' + selisih.toLocaleString('id-ID');
+                selisihColor = 'var(--success-color)';
+            } else {
+                selisihText = '<i class="fas fa-arrow-down"></i> Rp ' + Math.abs(selisih).toLocaleString('id-ID');
+                selisihColor = 'var(--danger-color)';
+            }
+            
+            selisihAmount.style.color = selisihColor;
+            selisihAmount.innerHTML = selisihText;
+            
+            // PERBAIKAN: Add closing transaction indicator dengan info gabungan
+            if (isClosing) {
+                let closingInfo = ' <span class="closing-info-badge" style="margin-left: 5px;">CLOSING</span>';
+                if (borrowedAmount > 0) {
+                    closingInfo += '<br><small style="font-size: 10px; color: var(--text-muted);">Dipinjam: Rp ' + borrowedAmount.toLocaleString('id-ID') + '</small>';
+                }
+                selisihAmount.innerHTML += closingInfo;
+            }
+        } else {
+            selisihRow.style.display = 'none';
+        }
+    }
+    
+    // Update validation button text for closing transactions
+    updateValidationButtonText(isClosing, selisih, borrowedAmount);
+}
+
+// PERBAIKAN: Enhanced calculation function untuk edit selisih dengan closing support dan kalkulasi gabungan
+function hitungSelisihEdit(isClosing = false) {
+    const sistemAmount = <?php echo isset($edit_selisih_detail['setoran_real']) ? $edit_selisih_detail['setoran_real'] : 0; ?>;
+    const borrowedAmount = getClosingBorrowedAmount();
+    
+    let diterima = document.getElementById('jumlahDiterimaBaru')?.value.replace(/[^0-9]/g, '') || 0;
+    diterima = parseInt(diterima) || 0;
+
+    // PERBAIKAN: Kalkulasi selisih dengan mempertimbangkan gabungan closing
+    let expectedAmount = sistemAmount;
+    if (isClosing && borrowedAmount > 0) {
+        // Untuk transaksi closing dengan pinjaman, yang diharapkan diterima = setoran_real - yang dipinjam
+        expectedAmount = sistemAmount - borrowedAmount;
+    }
+
+    const selisih = diterima - expectedAmount;
+    const selisihRow = document.getElementById('selisihEditRow');
+    const selisihAmount = document.getElementById('selisihEditAmount');
+
+    if (selisihRow && selisihAmount) {
+        let selisihText = '';
+        let selisihColor = '';
+        
+        if (selisih > 0) {
+            selisihText = '<i class="fas fa-arrow-up"></i> Rp ' + selisih.toLocaleString('id-ID');
+            selisihColor = 'var(--success-color)';
+        } else if (selisih < 0) {
+            selisihText = '<i class="fas fa-arrow-down"></i> Rp ' + Math.abs(selisih).toLocaleString('id-ID');
+            selisihColor = 'var(--danger-color)';
+        } else {
+            selisihText = '<i class="fas fa-check"></i> Sesuai Sistem';
+            selisihColor = 'var(--text-dark)';
+        }
+        
+        selisihAmount.style.color = selisihColor;
+        selisihAmount.innerHTML = selisihText;
+        
+        // PERBAIKAN: Add closing transaction indicator dengan info gabungan
+        if (isClosing) {
+            let closingInfo = ' <span class="closing-info-badge" style="margin-left: 5px;">CLOSING</span>';
+            if (borrowedAmount > 0) {
+                closingInfo += '<br><small style="font-size: 10px; color: var(--text-muted);">Dipinjam: Rp ' + borrowedAmount.toLocaleString('id-ID') + '</small>';
+            }
+            selisihAmount.innerHTML += closingInfo;
+        }
+    }
+    
+    // Update edit button text for closing transactions
+    updateEditButtonText(isClosing, selisih, borrowedAmount);
+}
+
+// PERBAIKAN: Function to update validation button text based on transaction type dengan info gabungan
+function updateValidationButtonText(isClosing, selisih, borrowedAmount = 0) {
+    const validationButton = document.querySelector('button[name="validasi_individual"]');
+    if (validationButton) {
+        let buttonText = '<i class="fas fa-save"></i> Simpan Validasi';
+        
+        if (isClosing) {
+            buttonText += ' Closing';
+            
+            if (borrowedAmount > 0) {
+                buttonText += ' (Gabungan)';
+            }
+            
+            if (selisih !== 0) {
+                buttonText = '<i class="fas fa-exclamation-triangle"></i> Simpan Validasi Closing (Ada Selisih)';
+                validationButton.className = 'btn btn-warning';
+            } else {
+                buttonText = '<i class="fas fa-check"></i> Simpan Validasi Closing (Sesuai)';
+                validationButton.className = 'btn btn-success';
+            }
+        } else {
+            if (selisih !== 0) {
+                validationButton.className = 'btn btn-warning';
+            } else {
+                validationButton.className = 'btn btn-primary';
+            }
+        }
+        
+        validationButton.innerHTML = buttonText;
+    }
+}
+
+// PERBAIKAN: Function to update edit button text based on transaction type dengan info gabungan
+function updateEditButtonText(isClosing, selisih, borrowedAmount = 0) {
+    const editButton = document.querySelector('button[name="edit_selisih"]');
+    if (editButton) {
+        let buttonText = '<i class="fas fa-save"></i> Simpan Perubahan';
+        
+        if (isClosing) {
+            buttonText += ' Closing';
+            
+            if (borrowedAmount > 0) {
+                buttonText += ' (Gabungan)';
+            }
+            
+            if (selisih !== 0) {
+                buttonText = '<i class="fas fa-exclamation-triangle"></i> Simpan Perubahan Closing (Ada Selisih)';
+                editButton.className = 'btn btn-warning';
+            } else {
+                buttonText = '<i class="fas fa-check"></i> Simpan Perubahan Closing (Sesuai)';
+                editButton.className = 'btn btn-success';
+            }
+        } else {
+            if (selisih !== 0) {
+                editButton.className = 'btn btn-warning';
+            } else {
+                editButton.className = 'btn btn-primary';
+            }
+        }
+        
+        editButton.innerHTML = buttonText;
+    }
+}
+
+// Enhanced filter function with closing transaction awareness
+function filterByCabang(rekeningId) {
+    console.log('Selected rekening ID:', rekeningId);
+    
+    if (rekeningId === '' || rekeningId === 'all') {
+        window.location.href = '?tab=setor_bank&rekening_filter=all';
+    } else {
+        // Send ALL IDs for proper gabungan filtering
+        window.location.href = '?tab=setor_bank&rekening_filter=' + encodeURIComponent(rekeningId);
+    }
+}
+
+// Enhanced form submission validation for setor bank with closing support
+let isFormSubmittingFinal = false; // Flag to allow final submission
+
+document.getElementById('setorBankForm')?.addEventListener('submit', function(e) {
+    const rekeningCabang = document.getElementById('rekeningCabang');
+    const checkedBoxes = document.querySelectorAll('.bankCheckbox:checked');
+    
+    if (!rekeningCabang.value || rekeningCabang.value === '') {
+        e.preventDefault();
+        showNotification('Pilih rekening cabang tujuan terlebih dahulu.', 'warning');
+        rekeningCabang.focus();
+        return false;
+    }
+    
+    if (checkedBoxes.length === 0) {
+        e.preventDefault();
+        showNotification('Pilih setoran yang akan disetor ke bank.', 'warning');
+        return false;
+    }
+    
+    // Check if any closing transactions are included
+    const closingTransactions = document.querySelectorAll('.bankCheckbox:checked').length;
+    let hasClosingTransactions = false;
+    
+    checkedBoxes.forEach(checkbox => {
+        const row = checkbox.closest('tr');
+        if (row && row.classList.contains('closing-transaction')) {
+            hasClosingTransactions = true;
+        }
+    });
+    
+    let confirmMessage = 'Yakin ingin setor ke bank? Pastikan semua data sudah benar.';
+    if (hasClosingTransactions) {
+        confirmMessage = 'Yakin ingin setor ke bank? Termasuk transaksi closing. Pastikan semua data sudah benar.';
+    }
+    
+    if (!confirm(confirmMessage)) {
+        e.preventDefault();
+        return false;
+    }
+    
+    return true;
+});
+
+// PERBAIKAN: Enhanced setoran summary dengan closing transaction details dan kalkulasi gabungan
+function showSetoranSummary() {
+    const checkedBoxes = document.querySelectorAll('.bankCheckbox:checked');
+    if (checkedBoxes.length === 0) {
+        showNotification('Pilih setoran yang akan disetor terlebih dahulu.', 'warning');
+        return;
+    }
+    
+    let totalAmount = 0;
+    let setoranList = [];
+    let closingCount = 0;
+    let totalClosingAmount = 0;
+    
+    checkedBoxes.forEach(checkbox => {
+        const row = checkbox.closest('tr');
+        const kodeSetoran = row.querySelector('code').textContent;
+        const cabang = row.cells[3].textContent;
+        const nominalText = row.cells[5].textContent;
+        const nominal = parseInt(nominalText.replace(/[^0-9]/g, ''));
+        const isClosing = row.classList.contains('closing-transaction');
+        
+        if (isClosing) {
+            closingCount++;
+            totalClosingAmount += nominal;
+        }
+        
+        totalAmount += nominal;
+        setoranList.push({
+            kode: kodeSetoran,
+            cabang: cabang,
+            nominal: nominal,
+            isClosing: isClosing
+        });
+    });
+    
+    let summaryHTML = `
+        <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid var(--border-color);">
+            <h4 style="margin-bottom: 15px; color: var(--text-dark);">
+                <i class="fas fa-calculator"></i> Ringkasan Setoran ke Bank
+            </h4>
+            <div style="margin-bottom: 15px;">
+                <strong>Jumlah Setoran Dipilih:</strong> ${setoranList.length} paket<br>
+                ${closingCount > 0 ? `<strong>Transaksi Closing Gabungan:</strong> <span style="color: var(--closing-color);">${closingCount} paket (${formatRupiah(totalClosingAmount)})</span><br>` : ''}
+                <strong>Total Nominal:</strong> <span style="color: var(--success-color); font-size: 18px; font-weight: bold;">Rp ${totalAmount.toLocaleString('id-ID')}</span>
+            </div>
+            ${closingCount > 0 ? `
+            <div style="background: rgba(156,39,176,0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(156,39,176,0.2);">
+                <small style="color: var(--closing-color); font-weight: 600;">
+                    <i class="fas fa-info-circle"></i> ${closingCount} setoran mengandung transaksi closing gabungan yang merupakan hasil dari transaksi closing, transaksi yang dipinjam, dan transaksi yang meminjam per cabang. Total nilai closing: ${formatRupiah(totalClosingAmount)}.
+                </small>
+            </div>
+            ` : ''}
+            <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px;">
+                <table style="width: 100%; font-size: 12px;">
+                    <thead>
+                        <tr style="background: var(--background-light);">
+                            <th style="padding: 5px; text-align: left;">Kode Setoran</th>
+                            <th style="padding: 5px; text-align: left;">Cabang</th>
+                            <th style="padding: 5px; text-align: center;">Jenis</th>
+                            <th style="padding: 5px; text-align: right;">Nominal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    `;
+    
+    setoranList.forEach(setoran => {
+        const jenisLabel = setoran.isClosing ? 
+            '<span class="status-badge bg-closing" style="font-size: 9px;">CLOSING</span>' : 
+            '<span class="status-badge bg-primary" style="font-size: 9px;">BIASA</span>';
+            
+        summaryHTML += `
+            <tr class="${setoran.isClosing ? 'closing-transaction' : ''}">
+                <td style="padding: 3px;">${setoran.kode}</td>
+                <td style="padding: 3px;">${setoran.cabang}</td>
+                <td style="padding: 3px; text-align: center;">${jenisLabel}</td>
+                <td style="padding: 3px; text-align: right;">Rp ${setoran.nominal.toLocaleString('id-ID')}</td>
+            </tr>
+        `;
+    });
+    
+    summaryHTML += `
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top: 15px; text-align: right;">
+                <button onclick="closeSummary()" class="btn btn-secondary btn-sm" style="margin-right: 10px;">
+                    <i class="fas fa-times"></i> Tutup
+                </button>
+                <button onclick="proceedWithDeposit()" class="btn btn-success btn-sm">
+                    <i class="fas fa-university"></i> Lanjut Setor${closingCount > 0 ? ' (Termasuk ' + closingCount + ' Closing Gabungan)' : ''}
+                </button>
+            </div>
+        </div>
+    `;
+    
+    showModal('summaryModal', summaryHTML);
+}
+
+// PERBAIKAN: Helper function untuk format rupiah
+function formatRupiah(amount) {
+    return 'Rp ' + amount.toLocaleString('id-ID');
+}
+
+// Enhanced proceed with deposit function
+function proceedWithDeposit() {
+    closeSummary();
+    const form = document.getElementById('setorBankForm');
+    const checkedBoxes = document.querySelectorAll('.bankCheckbox:checked');
+    
+    if (!form) {
+        showNotification('Form tidak ditemukan', 'danger');
+        return;
+    }
+    
+    let closingCount = 0;
+    let totalClosingAmount = 0;
+    
+    checkedBoxes.forEach(checkbox => {
+        const row = checkbox.closest('tr');
+        if (row && row.classList.contains('closing-transaction')) {
+            closingCount++;
+            const nominalText = row.cells[5].textContent;
+            const nominal = parseInt(nominalText.replace(/[^0-9]/g, ''));
+            totalClosingAmount += nominal;
+        }
+    });
+    
+    const confirmMessage = closingCount > 0 ? 
+        `Yakin ingin setor ke bank? Termasuk ${closingCount} transaksi closing gabungan dengan total ${formatRupiah(totalClosingAmount)}. Pastikan semua data sudah benar.` :
+        'Yakin ingin setor ke bank? Pastikan semua data sudah benar.';
+        
+    if (confirm(confirmMessage)) {
+        // Set flag to allow final submission
+        isFormSubmittingFinal = true;
+        console.log('Submitting form with flag set');
+        form.submit();
+    }
+}
+
+// Direct submission function that bypasses modal validation
+function submitDirectly() {
+    const form = document.getElementById('setorBankForm');
+    const rekeningCabang = document.getElementById('rekeningCabang');
+    const checkedBoxes = document.querySelectorAll('.bankCheckbox:checked');
+    
+    if (!rekeningCabang || !rekeningCabang.value || rekeningCabang.value === '') {
+        showNotification('Pilih rekening cabang tujuan terlebih dahulu.', 'warning');
+        if (rekeningCabang) rekeningCabang.focus();
+        return false;
+    }
+    
+    if (checkedBoxes.length === 0) {
+        showNotification('Pilih setoran yang akan disetor ke bank.', 'warning');
+        return false;
+    }
+    
+    if (confirm('Yakin ingin setor ke bank secara langsung? Pastikan semua data sudah benar.')) {
+        // Set flag and submit directly
+        isFormSubmittingFinal = true;
+        console.log('Direct submission initiated');
+        form.submit();
+    }
+}
+
+// Generic modal display function
+function showModal(modalId, content) {
+    // Remove existing modal
+    const existingModal = document.getElementById(modalId);
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Create modal overlay
+    const modalOverlay = document.createElement('div');
+    modalOverlay.id = modalId;
+    modalOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    `;
+    
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        max-width: 600px;
+        max-height: 80%;
+        overflow-y: auto;
+        margin: 20px;
+    `;
+    modalContent.innerHTML = content;
+    
+    modalOverlay.appendChild(modalContent);
+    document.body.appendChild(modalOverlay);
+    
+    // Close on overlay click
+    modalOverlay.addEventListener('click', function(e) {
+        if (e.target === modalOverlay) {
+            modalOverlay.remove();
+        }
+    });
+}
+
+// Close summary modal
+function closeSummary() {
+    const modal = document.getElementById('summaryModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Close receipt card
+function closeReceipt() {
+    const receiptCard = document.querySelector('.receipt-card');
+    if (receiptCard) {
+        receiptCard.style.display = 'none';
+    }
+}
+
+// Select all checkboxes functionality with closing transaction awareness
+document.getElementById('selectAllTerima')?.addEventListener('change', function() {
+    const checkboxes = document.querySelectorAll('.terimaCheckbox');
+    checkboxes.forEach(cb => cb.checked = this.checked);
+    
+    // Show info about closing transactions if any
+    if (this.checked) {
+        const closingCount = document.querySelectorAll('.closing-transaction .terimaCheckbox').length;
+        if (closingCount > 0) {
+            showNotification(`Dipilih ${checkboxes.length} setoran, termasuk ${closingCount} dengan transaksi closing gabungan.`, 'info');
+        }
+    }
+});
+
+document.getElementById('selectAllBank')?.addEventListener('change', function() {
+    const checkboxes = document.querySelectorAll('.bankCheckbox');
+    checkboxes.forEach(cb => cb.checked = this.checked);
+    
+    updateSummaryButtonVisibility();
+    
+    // Show info about closing transactions if any
+    if (this.checked) {
+        const closingCount = document.querySelectorAll('.closing-transaction .bankCheckbox').length;
+        if (closingCount > 0) {
+            showNotification(`Dipilih ${checkboxes.length} setoran, termasuk ${closingCount} dengan transaksi closing gabungan.`, 'info');
+        }
+    }
+});
+
+// Update summary button visibility and text
+document.querySelectorAll('.bankCheckbox').forEach(checkbox => {
+    checkbox.addEventListener('change', function() {
+        updateSummaryButtonVisibility();
+        updateSelectAllCheckbox();
+        
+        // PERBAIKAN: Update button text based on closing transactions dengan info gabungan
+        const checkedBoxes = document.querySelectorAll('.bankCheckbox:checked');
+        let closingCount = 0;
+        let totalClosingAmount = 0;
+        
+        checkedBoxes.forEach(cb => {
+            const row = cb.closest('tr');
+            if (row && row.classList.contains('closing-transaction')) {
+                closingCount++;
+                const nominalText = row.cells[5].textContent;
+                const nominal = parseInt(nominalText.replace(/[^0-9]/g, ''));
+                totalClosingAmount += nominal;
+            }
+        });
+        
+        const summaryButton = document.querySelector('button[onclick="showSetoranSummary()"]');
+        if (summaryButton && checkedBoxes.length > 0) {
+            let buttonText = '<i class="fas fa-calculator"></i> Lihat Ringkasan';
+            if (closingCount > 0) {
+                buttonText += ` (${closingCount} Closing: ${formatRupiah(totalClosingAmount)})`;
+            }
+            summaryButton.innerHTML = buttonText;
+        }
+    });
+});
+
+function updateSummaryButtonVisibility() {
+    const checkedCount = document.querySelectorAll('.bankCheckbox:checked').length;
+    const summaryButton = document.querySelector('button[onclick="showSetoranSummary()"]');
+    if (summaryButton) {
+        summaryButton.style.display = checkedCount > 0 ? 'inline-flex' : 'none';
+    }
+}
+
+function updateSelectAllCheckbox() {
+    const checkedCount = document.querySelectorAll('.bankCheckbox:checked').length;
+    const totalCheckboxes = document.querySelectorAll('.bankCheckbox').length;
+    const selectAllBank = document.getElementById('selectAllBank');
+    
+    if (selectAllBank) {
+        selectAllBank.checked = checkedCount === totalCheckboxes;
+        selectAllBank.indeterminate = checkedCount > 0 && checkedCount < totalCheckboxes;
+    }
+}
+
+// Enhanced notification system with closing transaction support
+function showNotification(message, type = 'info', duration = 5000) {
+    const notification = document.createElement('div');
+    notification.className = `alert alert-${type} show`;
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1050;
+        min-width: 300px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        animation: slideIn 0.3s ease-out;
+    `;
+    
+    const iconMap = {
+        'success': 'check-circle',
+        'danger': 'exclamation-circle',
+        'warning': 'exclamation-triangle',
+        'info': 'info-circle'
+    };
+    
+    notification.innerHTML = `
+        <i class="fas fa-${iconMap[type] || 'info-circle'}"></i>
+        ${message}
+        <button type="button" class="btn-close" onclick="this.parentElement.remove()" style="margin-left: auto;">&times;</button>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto remove
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.style.animation = 'slideOut 0.3s ease-in';
+            setTimeout(() => notification.remove(), 300);
+        }
+    }, duration);
+}
+
+// Close modals when clicking outside with closing transaction context
+document.querySelectorAll('.modal').forEach(modal => {
+    modal.addEventListener('click', function(e) {
+        if (e.target === this) {
+            const currentTab = '<?php echo $tab; ?>';
+            const isClosingModal = this.querySelector('.closing-validation-info') !== null;
+            
+            if (isClosingModal) {
+                const confirmMessage = 'Menutup modal validasi transaksi closing. Data yang dimasukkan akan hilang. Lanjutkan?';
+                if (!confirm(confirmMessage)) {
+                    return;
+                }
+            }
+            
+            // Redirect based on current tab
+            if (currentTab === 'validasi') {
+                window.location.href = '?tab=validasi';
+            } else if (currentTab === 'validasi_selisih') {
+                window.location.href = '?tab=validasi_selisih';
+            } else if (currentTab === 'bank_history') {
+                window.location.href = '?tab=bank_history';
+            } else {
+                window.location.href = '?tab=' + currentTab;
+            }
+        }
+    });
+});
+
+// Auto hide alerts with enhanced timing for closing transactions
+document.querySelectorAll('.alert.show').forEach(alert => {
+    const isClosingAlert = alert.textContent.includes('CLOSING') || alert.textContent.includes('closing');
+    const duration = isClosingAlert ? 7000 : 5000; // Longer display for closing alerts
+    
+    setTimeout(() => {
+        alert.style.animation = 'fadeOut 0.5s ease-out';
+        setTimeout(() => alert.classList.remove('show'), 500);
+    }, duration);
+});
+
+// Enhanced table interactions with closing transaction awareness
+document.querySelectorAll('.table tbody tr').forEach(row => {
+    const isClosing = row.classList.contains('closing-transaction');
+    
+    row.addEventListener('mouseenter', function() {
+        if (isClosing) {
+            this.style.backgroundColor = 'rgba(156,39,176,0.15)';
+            this.style.borderLeft = '4px solid var(--closing-color)';
+        } else {
+            this.style.backgroundColor = 'rgba(0,123,255,0.05)';
+        }
+    });
+    
+    row.addEventListener('mouseleave', function() {
+        if (isClosing) {
+            this.style.backgroundColor = 'rgba(156,39,176,0.05)';
+            this.style.borderLeft = '4px solid var(--closing-color)';
+        } else {
+            this.style.backgroundColor = '';
+            this.style.borderLeft = '';
+        }
+    });
+});
+
+// Keyboard shortcuts with closing transaction support
+document.addEventListener('keydown', function(e) {
+    // Ctrl + P for print (when modal is open)
+    if (e.ctrlKey && e.key === 'p') {
+        const modal = document.querySelector('.modal.show');
+        if (modal) {
+            e.preventDefault();
+            window.print();
+        }
+    }
+    
+    // Escape to close modals with closing transaction confirmation
+    if (e.key === 'Escape') {
+        const modal = document.querySelector('.modal.show');
+        if (modal) {
+            const isClosingModal = modal.querySelector('.closing-validation-info') !== null;
+            
+            if (isClosingModal) {
+                const confirmMessage = 'Menutup modal transaksi closing. Data yang dimasukkan akan hilang. Lanjutkan?';
+                if (!confirm(confirmMessage)) {
+                    return;
+                }
+            }
+            
+            const closeButton = modal.querySelector('.btn-close');
+            if (closeButton) {
+                closeButton.click();
+            }
+        }
+        
+        // Close summary modal
+        const summaryModal = document.getElementById('summaryModal');
+        if (summaryModal) {
+            closeSummary();
+        }
+        
+        // Close sidebar on mobile
+        if (window.innerWidth <= 768) {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar && !sidebar.classList.contains('hidden')) {
+                toggleSidebar();
+            }
+        }
+    }
+    
+    // Ctrl + B to toggle sidebar
+    if (e.ctrlKey && e.key === 'b') {
+        e.preventDefault();
+        toggleSidebar();
+    }
+    
+    // Ctrl + C to show closing transaction info (when viewing tables)
+    if (e.ctrlKey && e.key === 'c' && !e.target.matches('input, textarea')) {
+        e.preventDefault();
+        showClosingTransactionSummary();
+    }
+});
+
+// Function to show closing transaction summary
+function showClosingTransactionSummary() {
+    const closingRows = document.querySelectorAll('.closing-transaction');
+    if (closingRows.length === 0) {
+        showNotification('Tidak ada transaksi closing dalam tampilan saat ini.', 'info');
+        return;
+    }
+    
+    let summaryHTML = `
+        <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid var(--border-color);">
+            <h4 style="margin-bottom: 15px; color: var(--closing-color);">
+                <i class="fas fa-sync-alt"></i> Ringkasan Transaksi Closing
+            </h4>
+            <div style="margin-bottom: 15px;">
+                <p><strong>Total Transaksi Closing:</strong> ${closingRows.length}</p>
+                <p style="font-size: 14px; color: var(--text-muted);">
+                    Transaksi closing adalah gabungan dari transaksi closing, transaksi yang dipinjam, dan transaksi yang meminjam per cabang.
+                </p>
+            </div>
+            <div style="text-align: right;">
+                <button onclick="closeClosingSummary()" class="btn btn-secondary btn-sm">
+                    <i class="fas fa-times"></i> Tutup
+                </button>
+            </div>
+        </div>
+    `;
+    
+    showModal('closingSummaryModal', summaryHTML);
+}
+
+function closeClosingSummary() {
+    const modal = document.getElementById('closingSummaryModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Mobile touch handlers with closing transaction support
+let touchStartX = 0;
+let touchEndX = 0;
+
+document.addEventListener('touchstart', function(e) {
+    touchStartX = e.changedTouches[0].screenX;
+}, { passive: true });
+
+document.addEventListener('touchend', function(e) {
+    touchEndX = e.changedTouches[0].screenX;
+    handleGesture();
+}, { passive: true });
+
+function handleGesture() {
+    const swipeThreshold = 100;
+    const swipeDistance = touchEndX - touchStartX;
+    
+    if (window.innerWidth <= 768) {
+        // Swipe right to open sidebar
+        if (swipeDistance > swipeThreshold) {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar && sidebar.classList.contains('hidden')) {
+                toggleSidebar();
+            }
+        }
+        
+        // Swipe left to close sidebar
+        if (swipeDistance < -swipeThreshold) {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar && !sidebar.classList.contains('hidden')) {
+                toggleSidebar();
+            }
+        }
+    }
+}
+
+// Responsive adjustments with closing transaction considerations
+window.addEventListener('resize', function() {
+    const sidebar = document.getElementById('sidebar');
+    const mainContent = document.getElementById('mainContent');
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    const currentTab = '<?php echo $tab; ?>';
+    
+    if (window.innerWidth > 768) {
+        // Desktop: restore normal layout except for bank_history
+        if (currentTab !== 'bank_history') {
+            sidebar.classList.remove('hidden');
+            mainContent.classList.remove('fullscreen');
+            sidebarToggle.classList.remove('show');
+        }
+    } else {
+        // Mobile: always show toggle button
+        sidebarToggle.classList.add('show');
+    }
+    
+    // Adjust closing transaction highlighting for mobile
+    const closingTransactions = document.querySelectorAll('.closing-transaction');
+    closingTransactions.forEach(row => {
+        if (window.innerWidth <= 768) {
+            row.style.borderLeft = '2px solid var(--closing-color)';
+        } else {
+            row.style.borderLeft = '4px solid var(--closing-color)';
+        }
+    });
+    
+    // Re-initialize table scrolling after resize
+    setTimeout(() => {
+        reinitializeTableScrolling();
+    }, 300);
+});
+
+// Initialize page with closing transaction support
+document.addEventListener('DOMContentLoaded', function() {
+    // Check if we're on mobile
+    if (window.innerWidth <= 768) {
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        sidebarToggle.classList.add('show');
+    }
+    
+    // Auto-focus on first input in modals
+    const modal = document.querySelector('.modal.show');
+    if (modal) {
+        const firstInput = modal.querySelector('input[type="text"], input[type="number"], textarea');
+        if (firstInput) {
+            setTimeout(() => {
+                firstInput.focus();
+                // Special handling for closing transaction modals
+                const isClosingModal = modal.querySelector('.closing-validation-info') !== null;
+                if (isClosingModal) {
+                    showNotification('Modal transaksi closing dibuka. Perhatikan informasi gabungan transaksi.', 'info', 3000);
+                }
+            }, 300);
+        }
+    }
+    
+    // Initialize summary button visibility
+    updateSummaryButtonVisibility();
+    
+    // Initialize closing transaction calculations
+    const isClosing = checkIfClosingTransaction();
+    if (document.getElementById('jumlahDiterima')) {
+        hitungSelisihTransaksi(isClosing);
+    }
+    if (document.getElementById('jumlahDiterimaBaru')) {
+        hitungSelisihEdit(isClosing);
+    }
+});
+
+// Export functionality helpers with closing transaction info
+function exportToExcel(type, additionalParams = '') {
+    const currentTab = '<?php echo $tab; ?>';
+    let url = `export_excel_setoran.php?type=${type}&tab=${currentTab}`;
+    
+    // Add additional parameters if provided
+    if (additionalParams) {
+        url += '&' + additionalParams;
+    }
+    
+    // Add current filter parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const relevantParams = ['tanggal_awal', 'tanggal_akhir', 'cabang', 'rekening_filter'];
+    
+    relevantParams.forEach(param => {
+        if (urlParams.has(param)) {
+            url += `&${param}=${urlParams.get(param)}`;
+        }
+    });
+    
+    // Add closing transaction flag
+    const hasClosingTransactions = document.querySelectorAll('.closing-transaction').length > 0;
+    if (hasClosingTransactions) {
+        url += '&has_closing=true';
+    }
+    
+    window.open(url, '_blank');
+}
+
+function exportToCSV(type, additionalParams = '') {
+    const currentTab = '<?php echo $tab; ?>';
+    let url = `export_csv.php?type=${type}&tab=${currentTab}`;
+    
+    // Add additional parameters if provided
+    if (additionalParams) {
+        url += '&' + additionalParams;
+    }
+    
+    // Add current filter parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const relevantParams = ['tanggal_awal', 'tanggal_akhir', 'cabang', 'rekening_filter'];
+    
+    relevantParams.forEach(param => {
+        if (urlParams.has(param)) {
+            url += `&${param}=${urlParams.get(param)}`;
+        }
+    });
+    
+    // Add closing transaction flag
+    const hasClosingTransactions = document.querySelectorAll('.closing-transaction').length > 0;
+    if (hasClosingTransactions) {
+        url += '&has_closing=true';
+    }
+    
+    window.open(url, '_blank');
+}
+
+// Performance optimization: Debounce search with closing transaction awareness
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Apply debounce to search functions with closing highlighting
+const debouncedSearch = debounce(function(searchTerm, rows) {
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        const isVisible = text.includes(searchTerm);
+        row.style.display = isVisible ? '' : 'none';
+        
+        // Maintain closing transaction highlighting for visible rows
+        if (isVisible && row.classList.contains('closing-transaction')) {
+            row.style.backgroundColor = 'rgba(156,39,176,0.05)';
+            row.style.borderLeft = '4px solid var(--closing-color)';
+        }
+    });
+}, 300);
+
+// Export functions for external use
+window.tableScrolling = {
+    initialize: initializeTableScrolling,
+    reinitialize: reinitializeTableScrolling,
+    scrollTo: scrollTableTo,
+    addButtons: addScrollButtons
+};
+
+// Service worker registration for offline capability (optional)
+// Temporarily disabled to fix 404 error
+/*
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js')
+            .then(function(registration) {
+                console.log('ServiceWorker registration successful');
+            })
+            .catch(function(err) {
+                console.log('ServiceWorker registration failed');
+            });
+    });
+}
+*/
+
+// Final initialization
+console.log('Setoran Keuangan system initialized with enhanced table scrolling and closing transaction support');
+
+// Fungsi untuk menampilkan modal kembalikan ke CS
+function showKembalikanKeCSModal(kodeTransaksi, namaKaryawan, namaCabang) {
+    const modal = document.getElementById('kembalikanKeCSModal');
+    const form = document.getElementById('formKembalikanKeCS');
+    
+    // Set data ke form
+    document.getElementById('kembalikanTransaksiId').value = kodeTransaksi;
+    document.getElementById('kembalikanInfoText').innerHTML = `
+        <strong>Kode Transaksi:</strong> ${kodeTransaksi}<br>
+        <strong>CS Pengirim:</strong> ${namaKaryawan}<br>
+        <strong>Cabang:</strong> ${namaCabang}
+    `;
+    
+    // Reset form
+    document.getElementById('alasanKembalikan').value = '';
+    
+    // Show modal
+    modal.style.display = 'flex';
+    modal.classList.add('show');
+}
+
+function closeKembalikanKeCSModal() {
+    const modal = document.getElementById('kembalikanKeCSModal');
+    modal.style.display = 'none';
+    modal.classList.remove('show');
+}
+
+// Event listener untuk modal
+window.onclick = function(event) {
+    const modal = document.getElementById('kembalikanKeCSModal');
+    if (event.target === modal) {
+        closeKembalikanKeCSModal();
+    }
+}
+</script>
