@@ -191,18 +191,50 @@ if ($type == 'receipt') {
     $sql = "SELECT sb.*, 
                    GROUP_CONCAT(DISTINCT c.nama_cabang) as cabang_names,
                    COUNT(sbd.setoran_keuangan_id) as total_setoran_count,
-                   u.nama_karyawan as created_by_name
+                   u.nama_karyawan as created_by_name,
+                   -- TAMBAHAN: Tanggal closing transaksi untuk display
+                   (SELECT MIN(kt.tanggal_transaksi) 
+                    FROM kasir_transactions kt 
+                    JOIN setoran_keuangan sk2 ON kt.kode_setoran = sk2.kode_setoran
+                    JOIN setoran_ke_bank_detail sbd2 ON sk2.id = sbd2.setoran_keuangan_id
+                    WHERE sbd2.setoran_ke_bank_id = sb.id
+                    AND (kt.kode_transaksi LIKE '%CLOSING%' OR kt.kode_transaksi LIKE '%CLO%'
+                         OR EXISTS (
+                             SELECT 1 FROM pemasukan_kasir pk 
+                             WHERE pk.nomor_transaksi_closing = kt.kode_transaksi
+                         ))) as tanggal_closing_transaksi,
+                   -- TAMBAHAN: Total transaksi closing
+                   SUM(CASE WHEN kt.kode_transaksi LIKE '%CLOSING%' OR kt.kode_transaksi LIKE '%CLO%' 
+                            OR EXISTS (
+                                SELECT 1 FROM pemasukan_kasir pk 
+                                WHERE pk.nomor_transaksi_closing = kt.kode_transaksi
+                            ) THEN 1 ELSE 0 END) as total_closing_transactions
             FROM setoran_ke_bank sb
             JOIN setoran_ke_bank_detail sbd ON sb.id = sbd.setoran_ke_bank_id
             JOIN setoran_keuangan sk ON sbd.setoran_keuangan_id = sk.id
             JOIN cabang c ON sk.kode_cabang = c.kode_cabang
             LEFT JOIN users u ON sb.created_by = u.kode_karyawan
+            LEFT JOIN kasir_transactions kt ON sk.kode_setoran = kt.kode_setoran
             WHERE 1=1";
     
     $params = [];
     
     if ($tanggal_awal && $tanggal_akhir) {
-        $sql .= " AND sb.tanggal_setoran BETWEEN ? AND ?";
+        // PERBAIKAN: Filter berdasarkan tanggal closing transaksi, bukan tanggal setoran
+        $sql .= " AND (sb.tanggal_setoran BETWEEN ? AND ? OR EXISTS (
+            SELECT 1 FROM kasir_transactions kt2 
+            JOIN setoran_keuangan sk2 ON kt2.kode_setoran = sk2.kode_setoran
+            JOIN setoran_ke_bank_detail sbd2 ON sk2.id = sbd2.setoran_keuangan_id
+            WHERE sbd2.setoran_ke_bank_id = sb.id
+            AND kt2.tanggal_transaksi BETWEEN ? AND ?
+            AND (kt2.kode_transaksi LIKE '%CLOSING%' OR kt2.kode_transaksi LIKE '%CLO%'
+                 OR EXISTS (
+                     SELECT 1 FROM pemasukan_kasir pk 
+                     WHERE pk.nomor_transaksi_closing = kt2.kode_transaksi
+                 ))
+        ))";
+        $params[] = $tanggal_awal;
+        $params[] = $tanggal_akhir;
         $params[] = $tanggal_awal;
         $params[] = $tanggal_akhir;
     }
@@ -219,16 +251,25 @@ if ($type == 'receipt') {
     $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     $filename = 'Riwayat_Setoran_Bank_' . date('Y-m-d_H-i-s') . '.csv';
-    $headers = ['Tanggal Setor', 'Kode Setoran Bank', 'Cabang Terkait', 'Rekening Tujuan', 'Total Setoran', 'Jumlah Paket', 'Disetor Oleh', 'Metode'];
+    $headers = ['Tanggal Closing', 'Kode Setoran Bank', 'Cabang Terkait', 'Rekening Tujuan', 'Total Setoran', 'Jumlah Paket', 'Transaksi Closing', 'Disetor Oleh', 'Metode'];
     
     foreach ($result as $row) {
+        // PERBAIKAN: Gunakan tanggal closing transaksi jika tersedia, jika tidak gunakan tanggal setoran
+        $tanggal_display = '';
+        if (isset($row['tanggal_closing_transaksi']) && $row['tanggal_closing_transaksi']) {
+            $tanggal_display = date('d/m/Y', strtotime($row['tanggal_closing_transaksi']));
+        } else {
+            $tanggal_display = date('d/m/Y', strtotime($row['tanggal_setoran']));
+        }
+        
         $data[] = [
-            date('d/m/Y', strtotime($row['tanggal_setoran'])),
+            $tanggal_display,
             $row['kode_setoran'],
             $row['cabang_names'],
             $row['rekening_tujuan'],
             formatRupiah($row['total_setoran']),
             $row['total_setoran_count'] . ' paket',
+            isset($row['total_closing_transactions']) && $row['total_closing_transactions'] > 0 ? $row['total_closing_transactions'] . ' CLOSING' : '-',
             $row['created_by_name'],
             $row['metode_setoran']
         ];

@@ -193,10 +193,14 @@ if ($type == 'receipt') {
     $filename = 'Setoran_Menunggu_Penerimaan_' . date('Y-m-d_H-i-s') . '.xlsx';
 
 } elseif ($type == 'setor_bank') {
-    // Setor bank export - Updated to match setoran_keuangan.php filtering
-    $sql = "SELECT sk.*, COALESCE(u.nama_karyawan, 'Unknown User') AS nama_karyawan
+    // Setor bank export - Filter and display by closing date (MIN kasir_transactions.tanggal_closing)
+    $sql = "SELECT 
+                sk.*, 
+                COALESCE(u.nama_karyawan, 'Unknown User') AS nama_karyawan,
+                MIN(kt.tanggal_closing) AS tanggal_closing_setoran
             FROM setoran_keuangan sk
             LEFT JOIN users u ON sk.kode_karyawan = u.kode_karyawan
+            LEFT JOIN kasir_transactions kt ON sk.kode_setoran = kt.kode_setoran
             WHERE sk.status = 'Validasi Keuangan OK'";
     
     $params = [];
@@ -213,18 +217,30 @@ if ($type == 'receipt') {
         $params = array_merge($params, $rekening_ids);
     }
     
-    if ($tanggal_awal && $tanggal_akhir) {
-        $sql .= " AND sk.tanggal_setoran BETWEEN ? AND ?";
-        $params[] = $tanggal_awal;
-        $params[] = $tanggal_akhir;
-    }
-    
+    // Optional branch filter (must be applied before GROUP BY)
     if ($cabang !== 'all') {
         $sql .= " AND sk.nama_cabang = ?";
         $params[] = $cabang;
     }
+
+    // Group by setoran to allow aggregation of closing date
+    $sql .= " GROUP BY sk.id";
     
-    $sql .= " ORDER BY sk.tanggal_setoran DESC";
+    // Filter by aggregated closing date
+    if ($tanggal_awal && $tanggal_akhir) {
+        $sql .= " HAVING tanggal_closing_setoran BETWEEN ? AND ?";
+        $params[] = $tanggal_awal;
+        $params[] = $tanggal_akhir;
+    }
+    
+    // Optional branch filter
+    if ($cabang !== 'all') {
+        // When using HAVING above, branch filter must be applied before GROUP BY. Since it's rare, keep it simple by re-wrapping.
+        // Safer approach: move branch filter into WHERE by reconstructing when needed
+    }
+    
+    // Order by closing date desc
+    $sql .= " ORDER BY tanggal_closing_setoran DESC";
     
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -257,7 +273,9 @@ if ($type == 'receipt') {
         $selisih = $row['selisih_setoran'] ?? 0;
         $total_setoran += $jumlah_diterima;
         
-        $sheet->setCellValue('A' . $currentRow, date('d/m/Y', strtotime($row['tanggal_setoran'])));
+        // Use closing date for display, fallback to tanggal_setoran if needed
+        $tgl_disp = $row['tanggal_closing_setoran'] ?? $row['tanggal_setoran'];
+        $sheet->setCellValue('A' . $currentRow, $tgl_disp ? date('d/m/Y', strtotime($tgl_disp)) : '-');
         $sheet->setCellValue('B' . $currentRow, $row['kode_setoran']);
         $sheet->setCellValue('C' . $currentRow, ucfirst($row['nama_cabang']));
         $sheet->setCellValue('D' . $currentRow, $row['jumlah_setoran']);
@@ -422,16 +440,23 @@ if ($type == 'receipt') {
     $filename = 'Transaksi_Selisih_Validasi_' . date('Y-m-d_H-i-s') . '.xlsx';
 
 } elseif ($type == 'bank_history') {
-    // Bank history export
+    // Bank history export - Include closing date aggregation and closing txn count
     $sql = "SELECT sb.*, 
                    GROUP_CONCAT(DISTINCT c.nama_cabang) as cabang_names,
                    COUNT(sbd.setoran_keuangan_id) as total_setoran_count,
-                   u.nama_karyawan as created_by_name
+                   u.nama_karyawan as created_by_name,
+                   MIN(kt.tanggal_closing) as tanggal_closing_transaksi,
+                   SUM(CASE WHEN kt.kode_transaksi LIKE '%CLOSING%' OR kt.kode_transaksi LIKE '%CLO%'
+                            OR EXISTS (
+                                SELECT 1 FROM pemasukan_kasir pk 
+                                WHERE pk.nomor_transaksi_closing = kt.kode_transaksi
+                            ) THEN 1 ELSE 0 END) as total_closing_transactions
             FROM setoran_ke_bank sb
             JOIN setoran_ke_bank_detail sbd ON sb.id = sbd.setoran_ke_bank_id
             JOIN setoran_keuangan sk ON sbd.setoran_keuangan_id = sk.id
             JOIN cabang c ON sk.kode_cabang = c.kode_cabang
             LEFT JOIN users u ON sb.created_by = u.kode_karyawan
+            LEFT JOIN kasir_transactions kt ON sk.kode_setoran = kt.kode_setoran
             WHERE 1=1";
     
     $params = [];
@@ -464,13 +489,13 @@ if ($type == 'receipt') {
     $currentRow = 3;
     
     // Headers
-    $headers = ['Tanggal Setor', 'Kode Setoran Bank', 'Cabang Terkait', 'Rekening Tujuan', 'Total Setoran', 'Jumlah Paket', 'Disetor Oleh', 'Metode'];
+    $headers = ['Tanggal Closing', 'Kode Setoran Bank', 'Cabang Terkait', 'Rekening Tujuan', 'Total Setoran', 'Jumlah Paket', 'Transaksi Closing', 'Disetor Oleh', 'Metode'];
     $col = 'A';
     foreach ($headers as $header) {
         $sheet->setCellValue($col . $currentRow, $header);
         $col++;
     }
-    setHeaderStyle($sheet, 'A' . $currentRow . ':H' . $currentRow);
+    setHeaderStyle($sheet, 'A' . $currentRow . ':I' . $currentRow);
     $currentRow++;
     
     // Data
@@ -478,34 +503,44 @@ if ($type == 'receipt') {
     foreach ($data as $row) {
         $grand_total += $row['total_setoran'];
         
-        $sheet->setCellValue('A' . $currentRow, date('d/m/Y', strtotime($row['tanggal_setoran'])));
+        // PERBAIKAN: Gunakan tanggal closing transaksi jika tersedia, jika tidak gunakan tanggal setoran
+        $tanggal_display = '';
+        if (isset($row['tanggal_closing_transaksi']) && $row['tanggal_closing_transaksi']) {
+            $tanggal_display = date('d/m/Y', strtotime($row['tanggal_closing_transaksi']));
+        } else {
+            $tanggal_display = date('d/m/Y', strtotime($row['tanggal_setoran']));
+        }
+        
+        $sheet->setCellValue('A' . $currentRow, $tanggal_display);
         $sheet->setCellValue('B' . $currentRow, $row['kode_setoran']);
         $sheet->setCellValue('C' . $currentRow, $row['cabang_names']);
         $sheet->setCellValue('D' . $currentRow, $row['rekening_tujuan']);
         $sheet->setCellValue('E' . $currentRow, $row['total_setoran']);
         $sheet->setCellValue('F' . $currentRow, $row['total_setoran_count'] . ' paket');
-        $sheet->setCellValue('G' . $currentRow, $row['created_by_name']);
-        $sheet->setCellValue('H' . $currentRow, $row['metode_setoran']);
+        $sheet->setCellValue('G' . $currentRow, isset($row['total_closing_transactions']) && $row['total_closing_transactions'] > 0 ? $row['total_closing_transactions'] . ' CLOSING' : '-');
+        $sheet->setCellValue('H' . $currentRow, $row['created_by_name']);
+        $sheet->setCellValue('I' . $currentRow, $row['metode_setoran']);
         
         // Format currency
         $sheet->getStyle('E' . $currentRow)->getNumberFormat()->setFormatCode('#,##0');
         
         // Enable text wrapping for long content
         $sheet->getStyle('C' . $currentRow . ':D' . $currentRow)->getAlignment()->setWrapText(true);
-        $sheet->getStyle('G' . $currentRow)->getAlignment()->setWrapText(true);
+        $sheet->getStyle('H' . $currentRow)->getAlignment()->setWrapText(true);
         
         $currentRow++;
     }
     
     // Set column widths for better text display
-    $sheet->getColumnDimension('A')->setWidth(12); // Tanggal Setor
+    $sheet->getColumnDimension('A')->setWidth(12); // Tanggal Closing
     $sheet->getColumnDimension('B')->setWidth(20); // Kode Setoran Bank
     $sheet->getColumnDimension('C')->setWidth(25); // Cabang Terkait
     $sheet->getColumnDimension('D')->setWidth(30); // Rekening Tujuan
     $sheet->getColumnDimension('E')->setWidth(15); // Total Setoran
     $sheet->getColumnDimension('F')->setWidth(12); // Jumlah Paket
-    $sheet->getColumnDimension('G')->setWidth(20); // Disetor Oleh
-    $sheet->getColumnDimension('H')->setWidth(12); // Metode
+    $sheet->getColumnDimension('G')->setWidth(15); // Transaksi Closing
+    $sheet->getColumnDimension('H')->setWidth(20); // Disetor Oleh
+    $sheet->getColumnDimension('I')->setWidth(12); // Metode
     
     // Grand total
     if (count($data) > 0) {
@@ -513,9 +548,9 @@ if ($type == 'receipt') {
         $sheet->mergeCells('A' . $currentRow . ':D' . $currentRow);
         $sheet->setCellValue('E' . $currentRow, $grand_total);
         $sheet->getStyle('E' . $currentRow)->getNumberFormat()->setFormatCode('#,##0');
-        $sheet->getStyle('A' . $currentRow . ':H' . $currentRow)->getFont()->setBold(true);
+        $sheet->getStyle('A' . $currentRow . ':I' . $currentRow)->getFont()->setBold(true);
         
-        setDataStyle($sheet, 'A4:H' . $currentRow);
+        setDataStyle($sheet, 'A4:I' . $currentRow);
     }
     
     $filename = 'Riwayat_Setoran_Bank_' . date('Y-m-d_H-i-s') . '.xlsx';

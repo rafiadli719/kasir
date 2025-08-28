@@ -632,7 +632,6 @@ function updateSetoranKeuanganStatus($pdo, $kode_setoran, $kode_karyawan, $valid
         ]);
     }
 }
-
 // Handle setor ke bank
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['setor_bank'])) {
     // Debug logging
@@ -997,8 +996,17 @@ if ($tab == 'terima') {
         LEFT JOIN pemasukan_kasir pk ON pk.nomor_transaksi_closing = kt.kode_transaksi
         WHERE kt.deposit_status = 'Validasi Keuangan SELISIH'";
 } elseif ($tab == 'setor_bank') {
-    $sql_setoran .= " AND sk.status = 'Validasi Keuangan OK'";
-    
+    // Filter siap setor bank by status, join transaksi to compute closing date per setoran
+    $sql_setoran = "
+        SELECT 
+            sk.*, 
+            COALESCE(u.nama_karyawan, 'Unknown User') AS nama_karyawan,
+            MIN(kt.tanggal_closing) AS tanggal_closing_setoran
+        FROM setoran_keuangan sk
+        LEFT JOIN users u ON sk.kode_karyawan = u.kode_karyawan
+        LEFT JOIN kasir_transactions kt ON kt.kode_setoran = sk.kode_setoran
+        WHERE sk.status = 'Validasi Keuangan OK'";
+
     // Add rekening filter for setor_bank - filter by cabang matching rekening with same no_rekening
     if ($rekening_filter !== 'all' && !empty($rekening_filter)) {
         // Handle multiple rekening IDs (comma separated)
@@ -1011,6 +1019,9 @@ if ($tab == 'terima') {
         $params = array_merge($params, $rekening_ids);
         error_log("Adding rekening filter with IDs: " . $rekening_filter);
     }
+
+    // Group per setoran to enable HAVING on aggregated closing date later
+    $sql_setoran .= " GROUP BY sk.id";
 } elseif ($tab == 'monitoring') {
     // Monitoring query for individual closing transactions with detailed status tracking
     $sql_setoran = "
@@ -1073,6 +1084,7 @@ if ($tab == 'terima') {
                GROUP_CONCAT(DISTINCT c.nama_cabang) as cabang_names,
                COUNT(sbd.setoran_keuangan_id) as total_setoran_count,
                u.nama_karyawan as created_by_name,
+               MIN(kt.tanggal_closing) as tanggal_closing_transaksi,
                SUM(CASE WHEN kt.kode_transaksi LIKE '%CLOSING%' OR kt.kode_transaksi LIKE '%CLO%' 
                         OR EXISTS (
                             SELECT 1 FROM pemasukan_kasir pk 
@@ -1090,6 +1102,9 @@ if ($tab == 'terima') {
 // Apply filters
 if ($tanggal_awal && $tanggal_akhir) {
     if ($tab == 'validasi' || $tab == 'validasi_selisih') {
+        $sql_setoran .= " AND sk.tanggal_setoran BETWEEN ? AND ?";
+    } elseif ($tab == 'setor_bank') {
+        // Filter Setor Bank by tanggal_setoran to ensure all dates in range are shown
         $sql_setoran .= " AND sk.tanggal_setoran BETWEEN ? AND ?";
     } elseif ($tab == 'bank_history') {
         $sql_setoran .= " AND sb.tanggal_setoran BETWEEN ? AND ?";
@@ -1158,6 +1173,9 @@ if ($tab == 'validasi' || $tab == 'validasi_selisih') {
         sk.tanggal_setoran DESC, kt.tanggal_transaksi DESC";
 } elseif ($tab == 'bank_history') {
     $sql_setoran .= " GROUP BY sb.id ORDER BY sb.tanggal_setoran DESC";
+} elseif ($tab == 'setor_bank') {
+    // Order by tanggal setoran for setor_bank tab
+    $sql_setoran .= " ORDER BY sk.tanggal_setoran DESC";
 } elseif ($tab == 'monitoring') {
     $sql_setoran .= " ORDER BY 
         CASE kt.deposit_status 
@@ -1252,10 +1270,10 @@ if (isset($_GET['detail_id'])) {
         }
     }
 }
-
 // Handle bank detail view for closing report
 $bank_detail_view = null;
 $closing_detail = [];
+$all_closing_detail = [];
 if (isset($_GET['bank_detail_id'])) {
     $bank_detail_id = $_GET['bank_detail_id'];
     
@@ -1268,7 +1286,7 @@ if (isset($_GET['bank_detail_id'])) {
     $bank_detail_view = $stmt_bank_detail->fetch(PDO::FETCH_ASSOC);
 
     if ($bank_detail_view) {
-        // Get all setoran details grouped by cabang with closing info
+        // Get all setoran details grouped by cabang dengan closing info (untuk ringkasan)
         $sql_closing = "SELECT 
                            sk.kode_cabang,
                            c.nama_cabang,
@@ -1292,6 +1310,32 @@ if (isset($_GET['bank_detail_id'])) {
         $stmt_closing = $pdo->prepare($sql_closing);
         $stmt_closing->execute([$bank_detail_id]);
         $closing_detail = $stmt_closing->fetchAll(PDO::FETCH_ASSOC);
+
+        // Ambil keseluruhan detail transaksi (lintas cabang) untuk ditampilkan sekaligus
+        $sql_all_detail = "SELECT 
+                                c.nama_cabang,
+                                sk.kode_setoran,
+                                sk.tanggal_setoran,
+                                kt.kode_transaksi,
+                                kt.tanggal_transaksi,
+                                kt.setoran_real,
+                                CASE 
+                                    WHEN kt.kode_transaksi LIKE '%CLOSING%' OR kt.kode_transaksi LIKE '%CLO%' THEN 'DARI CLOSING'
+                                    WHEN EXISTS (
+                                        SELECT 1 FROM pemasukan_kasir pk2 
+                                        WHERE pk2.nomor_transaksi_closing = kt.kode_transaksi
+                                    ) THEN 'DARI CLOSING'
+                                    ELSE 'TRANSAKSI BIASA'
+                                END as jenis_transaksi
+                           FROM setoran_ke_bank_detail sbd
+                           JOIN setoran_keuangan sk ON sbd.setoran_keuangan_id = sk.id
+                           JOIN cabang c ON sk.kode_cabang = c.kode_cabang
+                           LEFT JOIN kasir_transactions kt ON sk.kode_setoran = kt.kode_setoran
+                           WHERE sbd.setoran_ke_bank_id = ?
+                           ORDER BY sk.tanggal_setoran, kt.tanggal_transaksi";
+        $stmt_all = $pdo->prepare($sql_all_detail);
+        $stmt_all->execute([$bank_detail_id]);
+        $all_closing_detail = $stmt_all->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
@@ -1873,7 +1917,6 @@ body {
     justify-content: space-between;
     align-items: center;
 }
-
 .content-header h3 {
     margin: 0;
     color: var(--text-dark);
@@ -2524,7 +2567,6 @@ body.tab-setor_bank #setorBankTableWrapper {
     border-radius: 12px;
     margin-bottom: 20px;
 }
-
 .workflow-info h6 {
     color: var(--info-color);
     font-weight: 600;
@@ -2873,7 +2915,6 @@ body.tab-setor_bank #setorBankTableWrapper {
 </button>
 
 <?php include 'includes/sidebar.php'; ?>
-
 <div class="main-content" id="mainContent">
     <div class="user-profile">
         <div class="user-avatar"><?php echo strtoupper(substr($username, 0, 1)); ?></div>
@@ -3420,7 +3461,11 @@ body.tab-setor_bank #setorBankTableWrapper {
                                     ?>
                                         <tr>
                                             <td><input type="checkbox" name="setoran_ids[]" value="<?php echo $row['id']; ?>" class="bankCheckbox"></td>
-                                            <td><?php echo date('d/m/Y', strtotime($row['tanggal_setoran'])); ?></td>
+                                            <td><?php 
+                                                $tgl_disp = $row['tanggal_closing_setoran'] ?? $row['tanggal_setoran'];
+                                                echo $tgl_disp ? date('d/m/Y', strtotime($tgl_disp)) : '-';
+                                            ?></td>
+
                                             <td><code><?php echo htmlspecialchars($row['kode_setoran']); ?></code></td>
                                             <td><?php echo htmlspecialchars(ucfirst($row['nama_cabang'])); ?></td>
                                             <td style="text-align: right; font-weight: 600;"><?php echo formatRupiah($row['jumlah_setoran']); ?></td>
@@ -3448,7 +3493,7 @@ body.tab-setor_bank #setorBankTableWrapper {
                         overflow-y: visible !important;
                         max-width: 100% !important;
                         scrollbar-width: thick !important;
-                        scrollbar-color: #dc3545 #f1f1f1 !important;
+                        scrollbar-color: #dc3545 #f8f9fa;
                     }
                     
                     #setorBankTableWrapper::-webkit-scrollbar {
@@ -3518,7 +3563,6 @@ body.tab-setor_bank #setorBankTableWrapper {
         </div>
     </div>
     <?php endif; ?>
-
     <!-- Tab Riwayat Setoran Bank - Full Page Layout with closing info -->
     <?php if ($tab == 'bank_history'): ?>
     <div class="content-card">
@@ -3612,7 +3656,11 @@ body.tab-setor_bank #setorBankTableWrapper {
                                 <?php if ($setoran_list): ?>
                                     <?php foreach ($setoran_list as $row): ?>
                                         <tr>
-                                            <td style="word-wrap: break-word; overflow-wrap: break-word; white-space: normal;"><?php echo date('d/m/Y', strtotime($row['tanggal_setoran'])); ?></td>
+                                            <td style="word-wrap: break-word; overflow-wrap: break-word; white-space: normal;"><?php 
+                                                $tgl_disp = $row['tanggal_closing_transaksi'] ?? $row['tanggal_setoran'];
+                                                echo $tgl_disp ? date('d/m/Y', strtotime($tgl_disp)) : '-';
+                                            ?></td>
+
                                             <td style="word-wrap: break-word; overflow-wrap: break-word; white-space: normal;"><code style="word-break: break-all;"><?php echo htmlspecialchars($row['kode_setoran']); ?></code></td>
                                             <td style="word-wrap: break-word; overflow-wrap: break-word; white-space: normal;"><?php echo htmlspecialchars($row['cabang_names']); ?></td>
                                             <td style="word-wrap: break-word; overflow-wrap: break-word; white-space: normal;"><?php echo htmlspecialchars($row['rekening_tujuan']); ?></td>
@@ -3639,7 +3687,7 @@ body.tab-setor_bank #setorBankTableWrapper {
                                                 $stmt_first_cabang->execute([$row['id']]);
                                                 $first_cabang = $stmt_first_cabang->fetchColumn();
                                                 ?>
-                                                <a href="?tab=bank_history&bank_detail_id=<?php echo $row['id']; ?>&cabang_closing=<?php echo urlencode($first_cabang); ?>" class="btn btn-info btn-sm">
+                                                <a href="?tab=bank_history&bank_detail_id=<?php echo $row['id']; ?>" class="btn btn-info btn-sm">
                                                     <i class="fas fa-eye"></i> Detail
                                                 </a>
                                             </td>
@@ -4044,7 +4092,6 @@ body.tab-setor_bank #setorBankTableWrapper {
         </div>
     </div>
     <?php endif; ?>
-
     <!-- PERBAIKAN: Enhanced Validation Modal for Closing Transactions dengan informasi gabungan -->
     <?php if ($transaksi_detail): ?>
     <div class="modal show" style="z-index: 10000;">
@@ -4378,8 +4425,8 @@ body.tab-setor_bank #setorBankTableWrapper {
     </div>
     <?php endif; ?>
 
-    <!-- Enhanced Bank Detail Modal (Closing Summary) - Hidden as requested by user -->
-    <?php if (false): // Hide this modal as requested ?>
+    <!-- Enhanced Bank Detail Modal (Closing Summary) -->
+    <?php if (isset($bank_detail_view) && !empty($bank_detail_view)): ?>
     <div class="modal show">
         <div class="modal-dialog modal-lg">
             <div class="modal-content" style="background: white; border-radius: 16px;">
@@ -4410,48 +4457,46 @@ body.tab-setor_bank #setorBankTableWrapper {
                         </div>
                     </div>
 
-                    <h6 style="margin-bottom: 15px; color: var(--text-dark);"><i class="fas fa-building"></i> Detail Setoran Closing per Cabang</h6>
+                    <h6 style="margin-bottom: 15px; color: var(--text-dark);"><i class="fas fa-list"></i> Detail Seluruh Transaksi Setoran (Semua Cabang)</h6>
                     <div class="table-container">
                         <div class="table-wrapper">
                             <div class="table-enhanced" style="overflow-x: auto;">
-                                <table class="table" style="min-width: 800px;">
+                                <table class="table" style="min-width: 900px;">
                                     <thead>
                                         <tr>
+                                            <th>Tanggal</th>
                                             <th>Cabang</th>
-                                            <th>Periode</th>
-                                            <th>Jumlah Setoran</th>
-                                            <th>Nominal Closing</th>
-                                            <th>Transaksi Closing</th>
-                                            <th>Setoran</th>
-                                            <th>Aksi</th>
+                                            <th>Kode Setoran</th>
+                                            <th>Kode Transaksi</th>
+                                            <th>Jenis</th>
+                                            <th>Nominal</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <?php if ($closing_detail): ?>
-                                            <?php foreach ($closing_detail as $closing): ?>
+                                        <?php if (!empty($all_closing_detail)): ?>
+                                            <?php $grand = 0; foreach ($all_closing_detail as $detail): $grand += (float)$detail['setoran_real']; ?>
                                                 <tr>
-                                                    <td><strong><?php echo htmlspecialchars(strtoupper($closing['nama_cabang'])); ?></strong></td>
-                                                    <td><?php echo date('d/m/Y', strtotime($closing['tanggal_awal'])); ?> - <?php echo date('d/m/Y', strtotime($closing['tanggal_akhir'])); ?></td>
-                                                    <td style="text-align: center;"><?php echo $closing['total_setoran']; ?> setoran</td>
-                                                    <td style="text-align: right; font-weight: 600;"><?php echo formatRupiah($closing['total_nominal']); ?></td>
-                                                    <td style="text-align: center;">
-                                                        <?php if (isset($closing['total_closing_transactions']) && $closing['total_closing_transactions'] > 0): ?>
-                                                            <span class="status-badge bg-closing"><?php echo $closing['total_closing_transactions']; ?> CLOSING</span>
+                                                    <td><?php echo date('d/m/Y', strtotime($detail['tanggal_transaksi'] ?: $detail['tanggal_setoran'])); ?></td>
+                                                    <td><strong><?php echo htmlspecialchars(strtoupper($detail['nama_cabang'])); ?></strong></td>
+                                                    <td><code><?php echo htmlspecialchars($detail['kode_setoran']); ?></code></td>
+                                                    <td><code><?php echo htmlspecialchars($detail['kode_transaksi']); ?></code></td>
+                                                    <td>
+                                                        <?php if ($detail['jenis_transaksi'] == 'DARI CLOSING'): ?>
+                                                            <span class="status-badge bg-closing">CLOSING</span>
                                                         <?php else: ?>
-                                                            <span style="color: var(--text-muted); font-size: 12px;">-</span>
+                                                            <span class="status-badge bg-primary">BIASA</span>
                                                         <?php endif; ?>
                                                     </td>
-                                                    <td style="font-size: 11px;"><?php echo htmlspecialchars(substr($closing['kode_setoran_list'], 0, 50)) . '...'; ?></td>
-                                                    <td>
-                                                        <a href="?tab=bank_history&bank_detail_id=<?php echo $bank_detail_view['id']; ?>&cabang_closing=<?php echo urlencode($closing['nama_cabang']); ?>" class="btn btn-primary btn-sm">
-                                                            <i class="fas fa-list"></i> Detail
-                                                        </a>
-                                                    </td>
+                                                    <td style="text-align: right; font-weight: 600;"><?php echo formatRupiah($detail['setoran_real']); ?></td>
                                                 </tr>
                                             <?php endforeach; ?>
+                                            <tr class="grand-total-row-fixed" style="background: #28a745; color: #fff; font-weight: bold;">
+                                                <td colspan="5" style="text-align: right;">TOTAL KESELURUHAN:</td>
+                                                <td style="text-align: right;"><?php echo formatRupiah($grand); ?></td>
+                                            </tr>
                                         <?php else: ?>
                                             <tr>
-                                                <td colspan="7" class="no-data">Tidak ada detail closing ditemukan</td>
+                                                <td colspan="6" class="no-data">Tidak ada transaksi ditemukan</td>
                                             </tr>
                                         <?php endif; ?>
                                     </tbody>
@@ -4640,7 +4685,6 @@ body.tab-setor_bank #setorBankTableWrapper {
         </div>
     </div>
     <?php endif; ?>
-
     <!-- Tab Monitoring - Detail Transaksi Closing -->
     <?php if ($tab == 'monitoring'): ?>
     <div class="content-card">
@@ -5279,7 +5323,6 @@ function hitungSelisihTransaksi(isClosing = false) {
     // Update validation button text for closing transactions
     updateValidationButtonText(isClosing, selisih, borrowedAmount);
 }
-
 // PERBAIKAN: Enhanced calculation function untuk edit selisih dengan closing support dan kalkulasi gabungan
 function hitungSelisihEdit(isClosing = false) {
     const sistemAmount = <?php echo isset($edit_selisih_detail['setoran_real']) ? $edit_selisih_detail['setoran_real'] : 0; ?>;
@@ -5913,7 +5956,6 @@ document.addEventListener('keydown', function(e) {
         showClosingTransactionSummary();
     }
 });
-
 // Function to show closing transaction summary
 function showClosingTransactionSummary() {
     const closingRows = document.querySelectorAll('.closing-transaction');
