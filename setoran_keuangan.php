@@ -636,23 +636,23 @@ function updateSetoranKeuanganStatus($pdo, $kode_setoran, $kode_karyawan, $valid
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['setor_bank'])) {
     // Debug logging
     error_log("SETOR BANK: POST data received");
-    error_log("setoran_ids: " . print_r($_POST['setoran_ids'] ?? [], true));
+    error_log("closing_ids: " . print_r($_POST['closing_ids'] ?? [], true));
     error_log("rekening_cabang_id: " . ($_POST['rekening_cabang_id'] ?? 'empty'));
     error_log("tanggal_setoran: " . ($_POST['tanggal_setoran'] ?? 'empty'));
     
-    $setoran_ids = $_POST['setoran_ids'] ?? [];
+    $closing_ids = $_POST['closing_ids'] ?? [];
     $rekening_cabang_id = $_POST['rekening_cabang_id'] ?? '';
     $tanggal_setor = $_POST['tanggal_setoran'] ?? date('Y-m-d');
 
-    if (empty($setoran_ids)) {
-        $error = "Pilih setoran untuk disetor.";
-        error_log("SETOR BANK ERROR: No setoran selected");
+    if (empty($closing_ids)) {
+        $error = "Pilih transaksi closing untuk disetor.";
+        error_log("SETOR BANK ERROR: No closing transactions selected");
     } elseif (empty($rekening_cabang_id)) {
         $error = "Pilih rekening cabang tujuan.";
         error_log("SETOR BANK ERROR: No rekening selected");
     } else {
-        // Check if all selected setoran have no selisih and from same cabang as rekening
-        $placeholders = array_fill(0, count($setoran_ids), '?');
+        // Check if all selected closing transactions are valid and from same cabang as rekening
+        $placeholders = array_fill(0, count($closing_ids), '?');
         
         // Get no_rekening from selected rekening to allow multiple cabang with same rekening
         // Handle multiple rekening IDs (comma separated)
@@ -678,35 +678,47 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['setor_bank'])) {
             if (empty($allowed_cabang)) {
                 $error = "Tidak ada cabang yang menggunakan rekening ini.";
             } else {
-                // Check if all setoran have no selisih and from cabang that use the same no_rekening
+                // Check if all closing transactions are valid and from cabang that use the same no_rekening
                 $cabang_placeholders = array_fill(0, count($allowed_cabang), '?');
-                $sql_check = "SELECT COUNT(*) FROM setoran_keuangan 
-                             WHERE id IN (" . implode(',', $placeholders) . ") 
-                             AND (status = 'Validasi Keuangan SELISIH' OR kode_cabang NOT IN (" . implode(',', $cabang_placeholders) . "))";
+                $sql_check = "SELECT COUNT(*) FROM kasir_transactions kt
+                             LEFT JOIN setoran_keuangan sk ON kt.kode_setoran = sk.kode_setoran
+                             WHERE kt.id IN (" . implode(',', $placeholders) . ") 
+                             AND (kt.deposit_status != 'Validasi Keuangan OK' OR sk.kode_cabang NOT IN (" . implode(',', $cabang_placeholders) . "))";
                 $stmt_check = $pdo->prepare($sql_check);
-                $params_check = array_merge($setoran_ids, $allowed_cabang);
+                $params_check = array_merge($closing_ids, $allowed_cabang);
                 $stmt_check->execute($params_check);
             
                 if ($stmt_check->fetchColumn() > 0) {
-                    $error = "Tidak dapat setor ke bank. Pastikan semua setoran dari cabang yang menggunakan rekening tujuan yang sama dan tidak ada selisih.";
+                    $error = "Tidak dapat setor ke bank. Pastikan semua transaksi closing dari cabang yang menggunakan rekening tujuan yang sama dan tidak ada selisih.";
                 } else {
-                $sql_check_status = "SELECT COUNT(*) FROM setoran_keuangan WHERE id IN (" . implode(',', $placeholders) . ") AND status NOT IN ('Validasi Keuangan OK')";
+                $sql_check_status = "SELECT COUNT(*) FROM kasir_transactions kt LEFT JOIN setoran_keuangan sk ON kt.kode_setoran = sk.kode_setoran WHERE kt.id IN (" . implode(',', $placeholders) . ") AND (kt.deposit_status NOT IN ('Validasi Keuangan OK') OR sk.status NOT IN ('Validasi Keuangan OK'))";
                 $stmt_check_status = $pdo->prepare($sql_check_status);
-                foreach ($setoran_ids as $index => $id) {
+                foreach ($closing_ids as $index => $id) {
                     $stmt_check_status->bindValue($index + 1, $id, PDO::PARAM_INT);
                 }
                 $stmt_check_status->execute();
                 
                 if ($stmt_check_status->fetchColumn() > 0) {
-                    $error = "Semua setoran harus dalam status 'Validasi Keuangan OK' sebelum disetor ke bank.";
+                    $error = "Semua transaksi closing harus dalam status 'Validasi Keuangan OK' sebelum disetor ke bank.";
                 } else {
-                    $sql_total = "SELECT SUM(COALESCE(jumlah_diterima, jumlah_setoran)) FROM setoran_keuangan WHERE id IN (" . implode(',', $placeholders) . ")";
+                    $sql_total = "SELECT SUM(kt.setoran_real) FROM kasir_transactions kt WHERE kt.id IN (" . implode(',', $placeholders) . ")";
                     $stmt_total = $pdo->prepare($sql_total);
-                    foreach ($setoran_ids as $index => $id) {
+                    foreach ($closing_ids as $index => $id) {
                         $stmt_total->bindValue($index + 1, $id, PDO::PARAM_INT);
                     }
                     $stmt_total->execute();
                     $total_setoran = $stmt_total->fetchColumn();
+
+                    // Get setoran IDs from selected closing transactions
+                    $sql_get_setoran_ids = "SELECT DISTINCT sk.id FROM kasir_transactions kt 
+                                           JOIN setoran_keuangan sk ON kt.kode_setoran = sk.kode_setoran 
+                                           WHERE kt.id IN (" . implode(',', $placeholders) . ")";
+                    $stmt_get_setoran_ids = $pdo->prepare($sql_get_setoran_ids);
+                    foreach ($closing_ids as $index => $id) {
+                        $stmt_get_setoran_ids->bindValue($index + 1, $id, PDO::PARAM_INT);
+                    }
+                    $stmt_get_setoran_ids->execute();
+                    $setoran_ids = $stmt_get_setoran_ids->fetchAll(PDO::FETCH_COLUMN);
 
                     // Temporarily disable the trigger to avoid recursive update conflict
                     // Note: DDL statements (DROP/CREATE TRIGGER) implicitly commit transactions
@@ -753,8 +765,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['setor_bank'])) {
                         }
 
                         // Now we can safely update both tables since trigger is disabled
+                        // Create placeholders for setoran_ids
+                        $setoran_placeholders = array_fill(0, count($setoran_ids), '?');
                         $sql_update_sk = "UPDATE setoran_keuangan SET status = 'Sudah Disetor ke Bank', updated_by = ?, updated_at = NOW() 
-                                         WHERE id IN (" . implode(',', $placeholders) . ")";
+                                         WHERE id IN (" . implode(',', $setoran_placeholders) . ")";
                         $stmt_update_sk = $pdo->prepare($sql_update_sk);
                         $stmt_update_sk->bindValue(1, $kode_karyawan, PDO::PARAM_STR);
                         foreach ($setoran_ids as $index => $id) {
@@ -766,7 +780,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['setor_bank'])) {
                         $sql_update_trans = "UPDATE kasir_transactions kt
                                             JOIN setoran_keuangan sk ON kt.kode_setoran = sk.kode_setoran
                                             SET kt.deposit_status = 'Sudah Disetor ke Bank', kt.rekening_tujuan_id = ?, kt.validasi_by = ?
-                                            WHERE sk.id IN (" . implode(',', $placeholders) . ")";
+                                            WHERE sk.id IN (" . implode(',', $setoran_placeholders) . ")";
                         $stmt_update_trans = $pdo->prepare($sql_update_trans);
                         $stmt_update_trans->bindValue(1, $first_rekening_id, PDO::PARAM_INT);
                         $stmt_update_trans->bindValue(2, $kode_karyawan, PDO::PARAM_STR);
@@ -996,16 +1010,36 @@ if ($tab == 'terima') {
         LEFT JOIN pemasukan_kasir pk ON pk.nomor_transaksi_closing = kt.kode_transaksi
         WHERE kt.deposit_status = 'Validasi Keuangan SELISIH'";
 } elseif ($tab == 'setor_bank') {
-    // Filter siap setor bank by status, join transaksi to compute closing date per setoran
+    // Filter siap setor bank by status, show individual closing transactions instead of grouped setoran
     $sql_setoran = "
         SELECT 
-            sk.*, 
-            COALESCE(u.nama_karyawan, 'Unknown User') AS nama_karyawan,
-            MIN(kt.tanggal_closing) AS tanggal_closing_setoran
-        FROM setoran_keuangan sk
+            kt.id,
+            kt.kode_transaksi,
+            kt.tanggal_transaksi,
+            kt.tanggal_closing,
+            kt.jam_closing,
+            kt.setoran_real,
+            kt.omset,
+            kt.data_setoran,
+            kt.deposit_status,
+            kt.kode_setoran,
+            kt.nama_cabang,
+            kt.kode_karyawan as kt_kode_karyawan,
+            sk.kode_setoran as setoran_kode,
+            sk.tanggal_setoran,
+            sk.jumlah_setoran,
+            sk.nama_pengantar,
+            sk.status as setoran_status,
+            sk.kode_karyawan,
+            sk.kode_cabang,
+            sk.nama_cabang as sk_nama_cabang,
+            COALESCE(u.nama_karyawan, 'Unknown User') AS nama_karyawan
+        FROM kasir_transactions kt
+        LEFT JOIN setoran_keuangan sk ON kt.kode_setoran = sk.kode_setoran
         LEFT JOIN users u ON sk.kode_karyawan = u.kode_karyawan
-        LEFT JOIN kasir_transactions kt ON kt.kode_setoran = sk.kode_setoran
-        WHERE sk.status = 'Validasi Keuangan OK'";
+        WHERE sk.status = 'Validasi Keuangan OK' 
+        AND kt.status = 'end proses'
+        AND kt.deposit_status IN ('Validasi Keuangan OK')";
 
     // Add rekening filter for setor_bank - filter by cabang matching rekening with same no_rekening
     if ($rekening_filter !== 'all' && !empty($rekening_filter)) {
@@ -1019,9 +1053,6 @@ if ($tab == 'terima') {
         $params = array_merge($params, $rekening_ids);
         error_log("Adding rekening filter with IDs: " . $rekening_filter);
     }
-
-    // Group per setoran to enable HAVING on aggregated closing date later
-    $sql_setoran .= " GROUP BY sk.id";
 } elseif ($tab == 'monitoring') {
     // Monitoring query for individual closing transactions with detailed status tracking
     $sql_setoran = "
@@ -1174,8 +1205,8 @@ if ($tab == 'validasi' || $tab == 'validasi_selisih') {
 } elseif ($tab == 'bank_history') {
     $sql_setoran .= " GROUP BY sb.id ORDER BY sb.tanggal_setoran DESC";
 } elseif ($tab == 'setor_bank') {
-    // Order by tanggal setoran for setor_bank tab
-    $sql_setoran .= " ORDER BY sk.tanggal_setoran DESC";
+    // Order by tanggal closing for setor_bank tab (per closing transaction)
+    $sql_setoran .= " ORDER BY kt.tanggal_closing DESC, kt.jam_closing DESC";
 } elseif ($tab == 'monitoring') {
     $sql_setoran .= " ORDER BY 
         CASE kt.deposit_status 
@@ -3020,9 +3051,9 @@ body.tab-setor_bank #setorBankTableWrapper {
         <div class="stats-card success">
             <div class="stats-content">
                 <div class="stats-info">
-                    <h4>Siap Setor Bank</h4>
+                    <h4>Transaksi Siap Setor Bank</h4>
                     <p class="stats-number"><?php 
-                        $stmt_count = $pdo->query("SELECT COUNT(*) FROM setoran_keuangan WHERE status = 'Validasi Keuangan OK'");
+                        $stmt_count = $pdo->query("SELECT COUNT(*) FROM kasir_transactions kt LEFT JOIN setoran_keuangan sk ON kt.kode_setoran = sk.kode_setoran WHERE sk.status = 'Validasi Keuangan OK' AND kt.status = 'end proses' AND kt.deposit_status = 'Validasi Keuangan OK'");
                         echo $stmt_count->fetchColumn();
                     ?></p>
                 </div>
@@ -3134,7 +3165,7 @@ body.tab-setor_bank #setorBankTableWrapper {
             <a class="nav-link <?php echo $tab == 'setor_bank' ? 'active' : ''; ?>" href="?tab=setor_bank">
                 <i class="fas fa-university"></i> Setor ke Bank 
                 <span class="badge"><?php 
-                    $stmt_count = $pdo->query("SELECT COUNT(*) FROM setoran_keuangan WHERE status = 'Validasi Keuangan OK'");
+                    $stmt_count = $pdo->query("SELECT COUNT(*) FROM kasir_transactions kt LEFT JOIN setoran_keuangan sk ON kt.kode_setoran = sk.kode_setoran WHERE sk.status = 'Validasi Keuangan OK' AND kt.status = 'end proses' AND kt.deposit_status = 'Validasi Keuangan OK'");
                     echo $stmt_count->fetchColumn();
                 ?></span>
             </a>
@@ -3370,13 +3401,13 @@ body.tab-setor_bank #setorBankTableWrapper {
         <div class="content-body">
             <div class="workflow-info">
                 <h6><i class="fas fa-info-circle"></i> Informasi Workflow</h6>
-                <p>Setoran yang sudah divalidasi tanpa selisih dan siap disetor ke bank. Sistem mendukung penuh penyetoran transaksi closing yang kompleks. <strong>Pilih rekening cabang terlebih dahulu untuk melihat setoran yang dapat disetor dari cabang tersebut.</strong></p>
+                <p>Transaksi closing yang sudah divalidasi tanpa selisih dan siap disetor ke bank. Tampilan menunjukkan setiap transaksi closing secara individual, bukan per paket setoran. <strong>Pilih rekening cabang terlebih dahulu untuk melihat transaksi closing yang dapat disetor dari cabang tersebut.</strong></p>
             </div>
 
             <?php if ($rekening_filter == 'all' || empty($setoran_list)): ?>
             <div class="no-setoran-message">
                 <h6><i class="fas fa-exclamation-triangle"></i> Pilih Rekening Cabang</h6>
-                <p>Silakan pilih rekening cabang di filter untuk menampilkan setoran yang siap disetor ke bank dari cabang tersebut.</p>
+                <p>Silakan pilih rekening cabang di filter untuk menampilkan transaksi closing yang siap disetor ke bank dari cabang tersebut.</p>
             </div>
             <?php endif; ?>
             
@@ -3433,7 +3464,7 @@ body.tab-setor_bank #setorBankTableWrapper {
                 <?php if ($rekening_filter !== 'all' && !empty($setoran_list)): ?>
                 <div class="alert alert-info show" style="margin-bottom: 20px;">
                     <i class="fas fa-info-circle"></i>
-                    Menampilkan setoran dari cabang yang sesuai dengan rekening yang dipilih. Total setoran yang dapat disetor: <strong><?php echo count($setoran_list); ?> paket</strong>
+                    Menampilkan transaksi closing dari cabang yang sesuai dengan rekening yang dipilih. Total transaksi closing yang dapat disetor: <strong><?php echo count($setoran_list); ?> transaksi</strong>
                 </div>
 
                 <div class="table-container">
@@ -3445,11 +3476,12 @@ body.tab-setor_bank #setorBankTableWrapper {
                                         <th width="50">
                                             <input type="checkbox" id="selectAllBank">
                                         </th>
-                                        <th>Tanggal</th>
+                                        <th>Tanggal Closing</th>
+                                        <th>Kode Transaksi</th>
                                         <th>Kode Setoran</th>
                                         <th>Cabang</th>
-                                        <th>Nominal Sistem</th>
-                                        <th>Jumlah Diterima</th>
+                                        <th>Setoran Real</th>
+                                        <th>Data Setoran</th>
                                         <th>Status</th>
                                     </tr>
                                 </thead>
@@ -3457,21 +3489,30 @@ body.tab-setor_bank #setorBankTableWrapper {
                                     <?php 
                                     $total_all_setoran = 0;
                                     foreach ($setoran_list as $row): 
-                                        $total_all_setoran += ($row['jumlah_diterima'] ?? $row['jumlah_setoran']);
+                                        $total_all_setoran += ($row['setoran_real'] ?? 0);
                                     ?>
                                         <tr>
-                                            <td><input type="checkbox" name="setoran_ids[]" value="<?php echo $row['id']; ?>" class="bankCheckbox"></td>
+                                            <td><input type="checkbox" name="closing_ids[]" value="<?php echo $row['id']; ?>" class="bankCheckbox"></td>
                                             <td><?php 
-                                                $tgl_disp = $row['tanggal_closing_setoran'] ?? $row['tanggal_setoran'];
-                                                echo $tgl_disp ? date('d/m/Y', strtotime($tgl_disp)) : '-';
+                                                $tgl_closing = $row['tanggal_closing'];
+                                                $jam_closing = $row['jam_closing'];
+                                                if ($tgl_closing) {
+                                                    echo date('d/m/Y', strtotime($tgl_closing));
+                                                    if ($jam_closing) {
+                                                        echo '<br><small>' . $jam_closing . '</small>';
+                                                    }
+                                                } else {
+                                                    echo '-';
+                                                }
                                             ?></td>
 
-                                            <td><code><?php echo htmlspecialchars($row['kode_setoran']); ?></code></td>
+                                            <td><code><?php echo htmlspecialchars($row['kode_transaksi']); ?></code></td>
+                                            <td><code style="font-size: 11px;"><?php echo htmlspecialchars($row['kode_setoran']); ?></code></td>
                                             <td><?php echo htmlspecialchars(ucfirst($row['nama_cabang'])); ?></td>
-                                            <td style="text-align: right; font-weight: 600;"><?php echo formatRupiah($row['jumlah_setoran']); ?></td>
-                                            <td style="text-align: right; font-weight: 600;"><?php echo formatRupiah($row['jumlah_diterima'] ?? $row['jumlah_setoran']); ?></td>
+                                            <td style="text-align: right; font-weight: 600;"><?php echo formatRupiah($row['setoran_real'] ?? 0); ?></td>
+                                            <td style="text-align: right; font-weight: 600;"><?php echo formatRupiah($row['data_setoran'] ?? 0); ?></td>
                                             <td>
-                                                <span class="status-badge bg-success">Validasi Keuangan OK</span>
+                                                <span class="status-badge bg-success"><?php echo htmlspecialchars($row['deposit_status']); ?></span>
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
