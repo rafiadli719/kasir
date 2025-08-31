@@ -32,6 +32,10 @@ $jenis_data = $_GET['jenis_data'] ?? 'semua'; // Default ke semua (kasir + pusat
 $sort_by = $_GET['sort_by'] ?? 'tanggal';
 $sort_order = $_GET['sort_order'] ?? 'DESC';
 
+// Debug: Log semua parameter GET
+error_log("DEBUG - All GET params: " . print_r($_GET, true));
+error_log("DEBUG - Sort by: " . $sort_by . ", Sort order: " . $sort_order);
+
 // Validasi sort_by untuk keamanan - UPDATED column names to match Excel format
 $allowed_sort_columns = [
     'tanggal', 'waktu', 'kode_transaksi', 'nama_cabang', 'kategori_akun',
@@ -149,7 +153,7 @@ if ($jenis_data === 'semua') {
                         cabang as nama_cabang,
                         tanggal,
                         waktu,
-                        pp.kode_akun,
+                        pp.kode_akun as kode_akun,
                         ma.arti as nama_akun,
                         ma.jenis_akun as kategori_akun,
                         jumlah,
@@ -177,13 +181,8 @@ if ($jenis_data === 'semua') {
         $filter_string_pusat = str_replace('nama_cabang', 'cabang', $filter_string);
         $query_pusat .= $filter_string_pusat;
         
-        // Combine with UNION - Fixed collation issue by using BINARY for comparison
-        $query = "({$query_kasir}) UNION ALL ({$query_pusat}) ORDER BY CAST({$sort_by} AS CHAR) " . strtoupper($sort_order);
-        
-        // Add secondary sort if not sorting by tanggal
-        if ($sort_by !== 'tanggal') {
-            $query .= ", CAST(tanggal AS CHAR) " . strtoupper($sort_order);
-        }
+        // Simple UNION approach - No ORDER BY, akan di-sort dengan PHP
+        $query = "({$query_kasir}) UNION ALL ({$query_pusat})";
         
     } catch (PDOException $e) {
         // FIXED: Fallback to original queries WITH PROPER ALIASES
@@ -248,7 +247,8 @@ if ($jenis_data === 'semua') {
             $fallback_sort_by = 'kode_akun';
         }
         
-        $query = "({$query_kasir}) UNION ALL ({$query_pusat}) ORDER BY CAST({$fallback_sort_by} AS CHAR) " . strtoupper($sort_order);
+        // Simple UNION fallback approach - No ORDER BY
+        $query = "({$query_kasir}) UNION ALL ({$query_pusat})";
     }
     
 } else {
@@ -260,7 +260,7 @@ if ($jenis_data === 'semua') {
                         cabang as nama_cabang,
                         tanggal,
                         waktu,
-                        pp.kode_akun,
+                        pp.kode_akun as kode_akun,
                         ma.arti as nama_akun,
                         ma.jenis_akun as kategori_akun,
                         jumlah,
@@ -304,11 +304,7 @@ if ($jenis_data === 'semua') {
             }
         }
         
-        $query .= " ORDER BY CAST({$sort_by} AS CHAR) " . strtoupper($sort_order);
-        
-        if ($sort_by !== 'tanggal') {
-            $query .= ", CAST(tanggal AS CHAR) " . strtoupper($sort_order);
-        }
+        // No ORDER BY - akan di-sort dengan PHP
         
     } catch (PDOException $e) {
         // FIXED: Fallback queries WITH PROPER ALIASES
@@ -346,7 +342,7 @@ if ($jenis_data === 'semua') {
             elseif ($sort_by === 'keterangan_akun') $fallback_sort_by = 'pp.keterangan';
             elseif (in_array($sort_by, ['tanggal', 'waktu', 'jumlah'])) $fallback_sort_by = 'pp.' . $sort_by;
             
-            $query .= " ORDER BY CAST({$fallback_sort_by} AS CHAR) " . strtoupper($sort_order);
+            // No ORDER BY - akan di-sort dengan PHP
             
         } else {
             $query = "SELECT 
@@ -384,12 +380,16 @@ if ($jenis_data === 'semua') {
             elseif ($sort_by === 'tanggal_transaksi') $fallback_sort_by = 'k.tanggal_transaksi';
             elseif (in_array($sort_by, ['tanggal', 'waktu', 'jumlah', 'kode_transaksi'])) $fallback_sort_by = 'p.' . $sort_by;
             
-            $query .= " ORDER BY CAST({$fallback_sort_by} AS CHAR) " . strtoupper($sort_order);
+            // No ORDER BY - akan di-sort dengan PHP
         }
     }
 }
 
 try {
+    // Debug logging untuk melihat query yang dijalankan
+    error_log("Sorting Debug - Sort by: {$sort_by}, Sort order: {$sort_order}");
+    error_log("Query to execute: " . substr($query, 0, 500) . "...");
+    
     $stmt = $pdo->prepare($query);
     if ($tanggal_awal && $tanggal_akhir) {
         $stmt->bindParam(':tanggal_awal', $tanggal_awal);
@@ -400,36 +400,71 @@ try {
     }
     $stmt->execute();
     $pemasukan = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // SORTING MENGGUNAKAN PHP
+    if (!empty($pemasukan)) {
+        // Function untuk sorting berdasarkan kolom dan order
+        function sortData($data, $column, $order) {
+            usort($data, function($a, $b) use ($column, $order) {
+                $valueA = $a[$column] ?? '';
+                $valueB = $b[$column] ?? '';
+                
+                // Handle specific data types
+                if ($column === 'jumlah') {
+                    // Numeric sorting for amount
+                    $result = floatval($valueA) <=> floatval($valueB);
+                } elseif ($column === 'tanggal' || $column === 'tanggal_transaksi') {
+                    // Date sorting
+                    $dateA = strtotime($valueA);
+                    $dateB = strtotime($valueB);
+                    $result = $dateA <=> $dateB;
+                } elseif ($column === 'waktu') {
+                    // Time sorting
+                    $timeA = strtotime("1970-01-01 " . $valueA);
+                    $timeB = strtotime("1970-01-01 " . $valueB);
+                    $result = $timeA <=> $timeB;
+                } elseif (is_numeric($valueA) && is_numeric($valueB)) {
+                    // General numeric sorting
+                    $result = $valueA <=> $valueB;
+                } else {
+                    // String sorting (case insensitive)
+                    $result = strcmp(strtolower($valueA), strtolower($valueB));
+                }
+                
+                return ($order === 'ASC') ? $result : -$result;
+            });
+            return $data;
+        }
+        
+        // Sort data sesuai parameter
+        $pemasukan = sortData($pemasukan, $sort_by, $sort_order);
+        
+        // Debug: Log hasil sorting
+        $first_row = $pemasukan[0];
+        $last_row = end($pemasukan);
+        error_log("DEBUG PHP SORT - Sort by: {$sort_by} {$sort_order}");
+        error_log("DEBUG PHP SORT - First row {$sort_by}: " . ($first_row[$sort_by] ?? 'NULL'));
+        error_log("DEBUG PHP SORT - Last row {$sort_by}: " . ($last_row[$sort_by] ?? 'NULL'));
+        error_log("DEBUG PHP SORT - Total records: " . count($pemasukan));
+    }
 } catch (PDOException $e) {
     // Log error for debugging
     error_log("Database error in detail_pemasukan.php: " . $e->getMessage());
     error_log("Query: " . $query);
     
-    // Fallback to simple query without sorting to avoid collation issues
-    $fallback_query = "SELECT 
-                        kode_transaksi,
-                        nama_cabang,
-                        tanggal,
-                        waktu,
-                        kode_akun,
-                        nama_akun,
-                        kategori_akun,
-                        jumlah,
-                        keterangan_akun,
-                        jenis_sumber,
-                        tanggal_transaksi,
-                        datetime_input
-                      FROM (
-                          SELECT 
+    // Final fallback to simple query with sorting support
+    if ($jenis_data === 'semua') {
+        // Simple UNION query for final fallback with basic sorting
+        $final_kasir = "SELECT 
                             p.kode_transaksi,
                             k.nama_cabang,
                             p.tanggal,
                             p.waktu,
                             p.kode_akun,
-                            m.arti AS nama_akun,
-                            m.jenis_akun as kategori_akun,
+                            COALESCE(m.arti, 'Unknown') AS nama_akun,
+                            COALESCE(m.jenis_akun, 'tidak_diketahui') as kategori_akun,
                             p.jumlah,
-                            p.keterangan_transaksi AS keterangan_akun,
+                            COALESCE(p.keterangan_transaksi, '-') AS keterangan_akun,
                             'kasir' as jenis_sumber,
                             k.tanggal_transaksi,
                             CONCAT(p.tanggal, ' ', p.waktu) as datetime_input
@@ -437,15 +472,91 @@ try {
                           JOIN kasir_transactions k ON p.kode_transaksi = k.kode_transaksi
                           LEFT JOIN master_akun m ON p.kode_akun = m.kode_akun
                           WHERE 1 = 1";
-    
-    if ($tanggal_awal && $tanggal_akhir) {
-        $fallback_query .= " AND p.tanggal BETWEEN :tanggal_awal AND :tanggal_akhir";
+        
+        $final_pusat = "SELECT 
+                            NULL as kode_transaksi,
+                            pp.cabang as nama_cabang,
+                            pp.tanggal,
+                            pp.waktu,
+                            pp.kode_akun,
+                            COALESCE(ma.arti, 'Unknown') AS nama_akun,
+                            COALESCE(ma.jenis_akun, 'tidak_diketahui') as kategori_akun,
+                            pp.jumlah,
+                            COALESCE(pp.keterangan, '-') AS keterangan_akun,
+                            'pusat' as jenis_sumber,
+                            pp.tanggal as tanggal_transaksi,
+                            CONCAT(pp.tanggal, ' ', pp.waktu) as datetime_input
+                          FROM pemasukan_pusat pp
+                          LEFT JOIN master_akun ma ON pp.kode_akun = ma.kode_akun
+                          WHERE 1 = 1";
+        
+        if ($tanggal_awal && $tanggal_akhir) {
+            $final_kasir .= " AND p.tanggal BETWEEN :tanggal_awal AND :tanggal_akhir";
+            $final_pusat .= " AND pp.tanggal BETWEEN :tanggal_awal AND :tanggal_akhir";
+        }
+        if ($cabang) {
+            $final_kasir .= " AND k.nama_cabang = :cabang";
+            $final_pusat .= " AND pp.cabang = :cabang";
+        }
+        
+        // Create simple UNION - No ORDER BY
+        $fallback_query = "({$final_kasir}) UNION ALL ({$final_pusat})";
+        
+    } else if ($jenis_data === 'kasir') {
+        $fallback_query = "SELECT 
+                            p.kode_transaksi,
+                            k.nama_cabang,
+                            p.tanggal,
+                            p.waktu,
+                            p.kode_akun,
+                            COALESCE(m.arti, 'Unknown') AS nama_akun,
+                            COALESCE(m.jenis_akun, 'tidak_diketahui') as kategori_akun,
+                            p.jumlah,
+                            COALESCE(p.keterangan_transaksi, '-') AS keterangan_akun,
+                            'kasir' as jenis_sumber,
+                            k.tanggal_transaksi,
+                            CONCAT(p.tanggal, ' ', p.waktu) as datetime_input
+                          FROM pemasukan_kasir p
+                          JOIN kasir_transactions k ON p.kode_transaksi = k.kode_transaksi
+                          LEFT JOIN master_akun m ON p.kode_akun = m.kode_akun
+                          WHERE 1 = 1";
+        
+        if ($tanggal_awal && $tanggal_akhir) {
+            $fallback_query .= " AND p.tanggal BETWEEN :tanggal_awal AND :tanggal_akhir";
+        }
+        if ($cabang) {
+            $fallback_query .= " AND k.nama_cabang = :cabang";
+        }
+        
+        // No ORDER BY - akan di-sort dengan PHP
+        
+    } else {
+        $fallback_query = "SELECT 
+                            NULL as kode_transaksi,
+                            pp.cabang as nama_cabang,
+                            pp.tanggal,
+                            pp.waktu,
+                            pp.kode_akun,
+                            COALESCE(ma.arti, 'Unknown') AS nama_akun,
+                            COALESCE(ma.jenis_akun, 'tidak_diketahui') as kategori_akun,
+                            pp.jumlah,
+                            COALESCE(pp.keterangan, '-') AS keterangan_akun,
+                            'pusat' as jenis_sumber,
+                            pp.tanggal as tanggal_transaksi,
+                            CONCAT(pp.tanggal, ' ', pp.waktu) as datetime_input
+                          FROM pemasukan_pusat pp
+                          LEFT JOIN master_akun ma ON pp.kode_akun = ma.kode_akun
+                          WHERE 1 = 1";
+        
+        if ($tanggal_awal && $tanggal_akhir) {
+            $fallback_query .= " AND pp.tanggal BETWEEN :tanggal_awal AND :tanggal_akhir";
+        }
+        if ($cabang) {
+            $fallback_query .= " AND pp.cabang = :cabang";
+        }
+        
+        // No ORDER BY - akan di-sort dengan PHP
     }
-    if ($cabang) {
-        $fallback_query .= " AND k.nama_cabang = :cabang";
-    }
-    
-    $fallback_query .= " ORDER BY p.tanggal DESC, p.waktu DESC) as combined_data";
     
     $stmt = $pdo->prepare($fallback_query);
     if ($tanggal_awal && $tanggal_akhir) {
@@ -457,6 +568,47 @@ try {
     }
     $stmt->execute();
     $pemasukan = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // SORTING MENGGUNAKAN PHP untuk fallback query
+    if (!empty($pemasukan)) {
+        // Function untuk sorting berdasarkan kolom dan order (fallback)
+        function sortDataFallback($data, $column, $order) {
+            usort($data, function($a, $b) use ($column, $order) {
+                $valueA = $a[$column] ?? '';
+                $valueB = $b[$column] ?? '';
+                
+                // Handle specific data types
+                if ($column === 'jumlah') {
+                    // Numeric sorting for amount
+                    $result = floatval($valueA) <=> floatval($valueB);
+                } elseif ($column === 'tanggal' || $column === 'tanggal_transaksi') {
+                    // Date sorting
+                    $dateA = strtotime($valueA);
+                    $dateB = strtotime($valueB);
+                    $result = $dateA <=> $dateB;
+                } elseif ($column === 'waktu') {
+                    // Time sorting
+                    $timeA = strtotime("1970-01-01 " . $valueA);
+                    $timeB = strtotime("1970-01-01 " . $valueB);
+                    $result = $timeA <=> $timeB;
+                } elseif (is_numeric($valueA) && is_numeric($valueB)) {
+                    // General numeric sorting
+                    $result = $valueA <=> $valueB;
+                } else {
+                    // String sorting (case insensitive)
+                    $result = strcmp(strtolower($valueA), strtolower($valueB));
+                }
+                
+                return ($order === 'ASC') ? $result : -$result;
+            });
+            return $data;
+        }
+        
+        // Sort data sesuai parameter
+        $pemasukan = sortDataFallback($pemasukan, $sort_by, $sort_order);
+        
+        error_log("DEBUG FALLBACK SORT - Sorted by: {$sort_by} {$sort_order}");
+    }
     
     // Show warning to user
     $error_message = "Data berhasil dimuat dengan query fallback karena ada masalah dengan sorting. Silakan hubungi administrator.";
@@ -1043,6 +1195,22 @@ foreach ($pemasukan as $data) {
         <?php endif; ?>
     </div>
 
+    <!-- Debug Info -->
+    <?php if (isset($_GET['debug'])): ?>
+        <div class="alert alert-info">
+            <i class="fas fa-bug"></i>
+            <strong>Debug Info:</strong><br>
+            Sort By: <?php echo htmlspecialchars($sort_by); ?><br>
+            Sort Order: <?php echo htmlspecialchars($sort_order); ?><br>
+            GET Params: <?php echo htmlspecialchars(http_build_query($_GET)); ?><br>
+            Total Records: <?php echo count($pemasukan); ?><br>
+            <?php if (!empty($pemasukan)): ?>
+                First Record <?php echo $sort_by; ?>: <?php echo htmlspecialchars($pemasukan[0][$sort_by] ?? 'NULL'); ?><br>
+                Last Record <?php echo $sort_by; ?>: <?php echo htmlspecialchars(end($pemasukan)[$sort_by] ?? 'NULL'); ?>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+
     <!-- Error Message Alert -->
     <?php if (isset($error_message)): ?>
         <div class="alert alert-warning">
@@ -1241,8 +1409,8 @@ foreach ($pemasukan as $data) {
                                     </span>
                                 </td>
                                 <td>
-                                    <span class="jenis-badge jenis-<?php echo htmlspecialchars($data['kategori_akun'], ENT_QUOTES); ?>">
-                                        <?php echo htmlspecialchars(ucfirst($data['kategori_akun']), ENT_QUOTES); ?>
+                                    <span class="jenis-badge jenis-<?php echo htmlspecialchars($data['kategori_akun'] ?? '', ENT_QUOTES); ?>">
+                                        <?php echo htmlspecialchars(ucfirst($data['kategori_akun'] ?? 'tidak_diketahui'), ENT_QUOTES); ?>
                                     </span>
                                 </td>
                                 <td><?php echo htmlspecialchars($data['nama_akun'] ?? '-', ENT_QUOTES); ?></td>
